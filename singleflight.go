@@ -4,61 +4,109 @@ import (
 	"sync"
 	"time"
 
-	"singleflight/inflight"
+	"github.com/kozhurkin/singleflight/flight"
 )
 
-// FlightCache обобщённый кеш/дедупликатор запросов:
-// по ключу K dedup-ит конкурентные вычисления значения V и
-// опционально кеширует успешный результат на cacheTime.
-type FlightCache[K comparable, V any] struct {
-	mu       sync.Mutex
-	inFlight map[K]*inflight.InFlight[V]
+// Group — обобщённый дедупликатор/кеш запросов:
+// по ключу K объединяет конкурентные вычисления значения V и
+// опционально кеширует результат на cacheTime с поддержкой прогрева (warmTime).
+type Group[K comparable, V any] struct {
+	mu          sync.Mutex
+	flights     map[K]*flight.Flight[V]
+	warmings    map[K]*flight.Flight[V]
+	cacheTime   time.Duration
+	cacheErrors bool
+	warmTime    time.Duration
 }
 
-func NewFlightCache[K comparable, V any]() *FlightCache[K, V] {
-	return &FlightCache[K, V]{
-		inFlight: make(map[K]*inflight.InFlight[V]),
+// NewGroup создаёт новый экземпляр Group без кеширования (только дедупликация).
+func NewGroup[K comparable, V any]() *Group[K, V] {
+	return &Group[K, V]{
+		flights: make(map[K]*flight.Flight[V]),
 	}
 }
 
-func (c *FlightCache[K, V]) deleteInFlightLocked(key K) {
+// NewGroupWithCache создаёт новый Group с параметрами кеширования.
+// cacheTime задаёт TTL кеша, cacheErrors определяет, нужно ли кешировать ошибки.
+// warmTime задаёт время ожидания прогрева перед удалением ключа из кеша.
+func NewGroupWithCache[K comparable, V any](cacheTime time.Duration, cacheErrors bool, warmTime time.Duration) *Group[K, V] {
+	return &Group[K, V]{
+		flights:     make(map[K]*flight.Flight[V]),
+		warmings:    make(map[K]*flight.Flight[V]),
+		cacheTime:   cacheTime,
+		cacheErrors: cacheErrors,
+		warmTime:    warmTime,
+	}
+}
+
+// getOrCreateFlight атомарно получает существующий Flight по key
+// или создаёт новый, если его ещё нет.
+// Возвращает пару (Flight, created), где created == true, если запись была создана.
+func (c *Group[K, V]) getOrCreateFlight(
+	key K,
+	fn func() (V, error),
+) (f *flight.Flight[V], created bool) {
 	c.mu.Lock()
-	delete(c.inFlight, key)
+	defer c.mu.Unlock()
+
+	// Если для этого key уже есть вычисление — просто возвращаем его
+	if existing, ok := c.flights[key]; ok {
+		return existing, false
+	}
+
+	// Мы — первый для этого key: создаём Flight и сохраняем
+	f = flight.NewFlight(fn)
+	c.flights[key] = f
+	return f, true
+}
+
+func (c *Group[K, V]) deleteFlight(key K) {
+	c.mu.Lock()
+	delete(c.flights, key)
 	c.mu.Unlock()
 }
 
-// Do выполняет вычисление значения для key без кеширования (только дедупликация параллельных вызовов).
-// fn вызывается только один раз для каждого key на единичный "рывок" запросов.
-func (c *FlightCache[K, V]) Do(
+// startWarmingIfNeeded проверяет флаг ожидания прогрева для key и,
+// если он установлен, создаёт разогревочный Flight и запускает его.
+func (c *Group[K, V]) startWarmingIfNeeded(
 	key K,
 	fn func() (V, error),
-) (V, error) {
-	return c.DoWithCache(key, 0, false, fn)
+) {
+	c.mu.Lock()
+	if wf, ok := c.warmings[key]; !ok || wf != nil {
+		// нет флага, или прогрев уже запущен
+		c.mu.Unlock()
+		return
+	}
+
+	wf := flight.NewFlight(fn)
+	c.warmings[key] = wf
+	c.mu.Unlock()
+	go wf.Run()
 }
 
-// DoWithCache выполняет (или переиспользует) вычисление значения для key с опциональным кешированием.
-// fn вызывается только один раз для каждого key в период cacheTime.
+// Do выполняет (или переиспользует) вычисление значения для key с учётом настроек кеша.
+// fn вызывается только один раз для каждого key в период cacheTime (если cacheTime > 0).
 // Если cacheErrors == false, ошибки не кешируются (последующие вызовы будут пытаться ещё раз).
 // Если cacheErrors == true, то и успешные результаты, и ошибки кешируются до истечения cacheTime.
-func (c *FlightCache[K, V]) DoWithCache(
+func (c *Group[K, V]) Do(
 	key K,
-	cacheTime time.Duration,
-	cacheErrors bool,
 	fn func() (V, error),
 ) (V, error) {
-	c.mu.Lock()
-	// Если для этого key запрос уже выполняется — просто ждём его
-	if f, ok := c.inFlight[key]; ok {
-		c.mu.Unlock()
+	cacheTime := c.cacheTime
+	cacheErrors := c.cacheErrors
+
+	// Атомарно получаем существующий Flight или создаём новый
+	f, created := c.getOrCreateFlight(key, fn)
+
+	// Если мы не создавали Flight (присоединились к уже существующему),
+	// просто ждём результат и выходим — как и в исходной логике.
+	if !created {
+		c.startWarmingIfNeeded(key, fn)
 		return f.Wait()
 	}
 
-	// Мы — первый для этого key
-	f := inflight.NewInFlight(fn)
-	c.inFlight[key] = f
-	c.mu.Unlock()
-
-	// Первый вызов запустит fn
+	// Мы — первый для этого key: запускаем fn
 	f.Run()
 
 	// Ждём результат выполнения
@@ -67,15 +115,46 @@ func (c *FlightCache[K, V]) DoWithCache(
 	// Если cacheTime == 0 или (ошибка и мы не хотим кешировать ошибки) —
 	// не кешируем: сразу удаляем запись
 	if cacheTime == 0 || (!cacheErrors && err != nil) {
-		c.deleteInFlightLocked(key)
+		c.deleteFlight(key)
 		return res, err
 	}
-
 	// Успешный результат кешируем на cacheTime
-	go func(key K, d time.Duration) {
-		time.Sleep(d)
-		c.deleteInFlightLocked(key)
+	go func(key K, cacheTime time.Duration) {
+		time.Sleep(cacheTime)
+		if c.warmTime == 0 {
+			c.deleteFlight(key)
+			return
+		}
+
+		// ставим метку на разогрев
+		c.markWarmingPending(key)
+
+		// ждём разогрева и применяем результат
+		time.Sleep(c.warmTime)
+		c.applyWarmResult(key)
 	}(key, cacheTime)
 
 	return res, err
+}
+
+// markWarmingPending помечает key как ожидающий прогрева.
+func (c *Group[K, V]) markWarmingPending(key K) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.warmings[key] = nil
+}
+
+// applyWarmResult применяет результат прогрева (если был) или очищает ключ.
+func (c *Group[K, V]) applyWarmResult(key K) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if wf := c.warmings[key]; wf == nil {
+		// прогрев не запустился, очищаем
+		delete(c.flights, key)
+	} else {
+		// прогрев запустился, перемещаем
+		c.flights[key] = wf
+	}
+	delete(c.warmings, key)
 }

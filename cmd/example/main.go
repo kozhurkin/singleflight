@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"singleflight"
+	"github.com/kozhurkin/singleflight"
 )
 
 type Weather struct {
@@ -79,7 +79,8 @@ func main() {
 	// Добавляем миллисекунды (и микросекунды) в таймстемпы логов
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
 
-	cache := singleflight.NewFlightCache[string, Weather]()
+	// Кеш: TTL 5 секунд, ошибки не кешируем, время прогрева 2 секунды
+	cache := singleflight.NewGroupWithCache[string, Weather](5*time.Second, false, 2*time.Second)
 
 	mux := http.NewServeMux()
 
@@ -91,12 +92,10 @@ func main() {
 			return
 		}
 
-		// Используем FlightCache: ключом будет город, TTL 5 секунд, ошибки не кешируем
-		weather, err := cache.DoWithCache(city, 5*time.Second, false,
-			func() (Weather, error) {
-				return fetchWeather(city)
-			},
-		)
+		// Используем singleflight.Group: ключом будет город
+		weather, err := cache.Do(city, func() (Weather, error) {
+			return fetchWeather(city)
+		})
 		if err != nil {
 			http.Error(w, fmt.Sprintf("fetch error: %v", err), http.StatusBadGateway)
 			return
@@ -127,7 +126,6 @@ func main() {
 		for round := 0; round < 5; round++ {
 			r := round
 			for _, city := range cities {
-				city := city
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
