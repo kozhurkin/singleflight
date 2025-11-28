@@ -17,6 +17,7 @@ import (
 type Weather struct {
 	CurrentWeather struct {
 		Temperature float64 `json:"temperature"`
+		Windspeed   float64 `json:"windspeed"`
 	} `json:"current_weather"`
 }
 
