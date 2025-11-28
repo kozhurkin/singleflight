@@ -79,10 +79,10 @@ mux.HandleFunc("/weather", func(w http.ResponseWriter, r *http.Request) {
 ## Установка
 
 ```bash
-go get github.com/your-org/singleflight
+go get github.com/kozhurkin/singleflight
 ```
 
-> Замените `github.com/your-org/singleflight` на реальный импортный путь вашего модуля.
+Репозиторий: [github.com/kozhurkin/singleflight](https://github.com/kozhurkin/singleflight)
 
 ---
 
