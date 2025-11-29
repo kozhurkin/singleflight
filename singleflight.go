@@ -123,7 +123,7 @@ func (c *Group[K, V]) wrapWithCacheLifecycle(
 
 			// Ожидаем время прогрева и применяем результат, если прогрев случился
 			time.Sleep(c.warmTime)
-			c.applyWarmResult(key)
+			c.applyWarmingResult(key)
 		}(key, c.cacheTime)
 
 		return res, err
@@ -165,8 +165,8 @@ func (c *Group[K, V]) markWarmingPending(key K) {
 	c.warmings[key] = nil
 }
 
-// applyWarmResult применяет результат прогрева (если был) или очищает ключ.
-func (c *Group[K, V]) applyWarmResult(key K) {
+// applyWarmingResult применяет результат прогрева (если был) или очищает ключ.
+func (c *Group[K, V]) applyWarmingResult(key K) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 

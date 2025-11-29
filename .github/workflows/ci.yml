@@ -20,7 +20,7 @@ jobs:
 
       - name: Run tests with coverage
         run: |
-          go test ./... -covermode=atomic -coverprofile=coverage.out
+          go test . ./flight/... -covermode=atomic -coverprofile=coverage.out
           go tool cover -func=coverage.out | tee coverage.txt
           go tool cover -html=coverage.out -o coverage.html
 
