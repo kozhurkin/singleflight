@@ -1,0 +1,6 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/kozhurkin/singleflight
+cpu: Apple M1 Pro
+BenchmarkDo_NoCache_Deduplication-8     	signal: interrupt
+FAIL	github.com/kozhurkin/singleflight	4.095s
