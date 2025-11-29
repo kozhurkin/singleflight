@@ -60,12 +60,6 @@ func (c *Group[K, V]) getOrCreateFlight(
 	return f, true
 }
 
-func (c *Group[K, V]) deleteFlight(key K) {
-	c.mu.Lock()
-	delete(c.flights, key)
-	c.mu.Unlock()
-}
-
 // startWarmingIfNeeded проверяет флаг ожидания прогрева для key и,
 // если он установлен, создаёт разогревочный Flight и запускает его.
 func (c *Group[K, V]) startWarmingIfNeeded(
@@ -85,32 +79,49 @@ func (c *Group[K, V]) startWarmingIfNeeded(
 	go wf.Run()
 }
 
-// wrapFn оборачивает пользовательскую fn логикой кеширования и прогрева.
-func (c *Group[K, V]) wrapFn(
+func (c *Group[K, V]) deleteKey(key K) {
+	c.mu.Lock()
+	delete(c.flights, key)
+	if c.warmings != nil {
+		delete(c.warmings, key)
+	}
+	c.mu.Unlock()
+}
+
+// wrapWithCacheLifecycle оборачивает пользовательскую fn логикой кеширования и прогрева.
+func (c *Group[K, V]) wrapWithCacheLifecycle(
 	key K,
 	fn func() (V, error),
 ) func() (V, error) {
 	return func() (V, error) {
 		res, err := fn()
 
-		// Если cacheTime == 0 или (ошибка и мы не хотим кешировать ошибки) —
-		// не кешируем: сразу удаляем запись
-		if c.cacheTime == 0 || (!c.cacheErrors && err != nil) {
-			c.deleteFlight(key)
+		// Если кеш выключен, то не кешируем: освобождаем ключ
+		if c.cacheTime == 0 {
+			c.deleteKey(key)
 			return res, err
 		}
-		// Успешный результат кешируем на cacheTime
+		// Если ошибка и мы не хотим кешировать ошибки, то не кешируем: освобождаем ключ
+		if !c.cacheErrors && err != nil {
+			c.deleteKey(key)
+			return res, err
+		}
+		// Если нужно кешировать, то откладываем освобождение ключа на cacheTime асинхронно
 		go func(key K, cacheTime time.Duration) {
 			time.Sleep(cacheTime)
+
+			// Если прогрев выключен, то не прогреваем: освобождаем ключ
 			if c.warmTime == 0 {
-				c.deleteFlight(key)
+				c.deleteKey(key)
 				return
 			}
 
-			// ставим метку на разогрев
+			// ПРОГРЕВ
+
+			// Помечаем ключ как ожидающий прогрева
 			c.markWarmingPending(key)
 
-			// ждём разогрева и применяем результат
+			// Ожидаем время прогрева и применяем результат, если прогрев случился
 			time.Sleep(c.warmTime)
 			c.applyWarmResult(key)
 		}(key, c.cacheTime)
@@ -127,13 +138,16 @@ func (c *Group[K, V]) Do(
 	key K,
 	fn func() (V, error),
 ) (V, error) {
-	fnWrapped := c.wrapFn(key, fn)
+	// Оборачиваем пользовательскую fn логикой кеширования и прогрева
+	fnWrapped := c.wrapWithCacheLifecycle(key, fn)
+
 	// Атомарно получаем существующий Flight или создаём новый
 	f, created := c.getOrCreateFlight(key, fnWrapped)
 
 	// Если мы не создавали Flight (присоединились к уже существующему),
-	// просто ждём результат и выходим — как и в исходной логике.
+	// просто ждём результат и выходим.
 	if !created {
+		// Перед возвратом результата проверяем, нужно ли запускать прогрев
 		c.startWarmingIfNeeded(key, fnWrapped)
 		return f.Wait()
 	}
