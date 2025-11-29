@@ -24,6 +24,10 @@ jobs:
           go tool cover -func=coverage.out | tee coverage.txt
           go tool cover -html=coverage.out -o coverage.html
 
+      - name: Run benchmarks
+        run: |
+          go test -bench=. -benchmem -benchtime=3s > benchmark.txt
+
       - name: Upload coverage artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -32,5 +36,11 @@ jobs:
             coverage.out
             coverage.txt
             coverage.html
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: benchmark.txt
 
 
