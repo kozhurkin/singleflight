@@ -85,6 +85,40 @@ func (c *Group[K, V]) startWarmingIfNeeded(
 	go wf.Run()
 }
 
+// wrapFn оборачивает пользовательскую fn логикой кеширования и прогрева.
+func (c *Group[K, V]) wrapFn(
+	key K,
+	fn func() (V, error),
+) func() (V, error) {
+	return func() (V, error) {
+		res, err := fn()
+
+		// Если cacheTime == 0 или (ошибка и мы не хотим кешировать ошибки) —
+		// не кешируем: сразу удаляем запись
+		if c.cacheTime == 0 || (!c.cacheErrors && err != nil) {
+			c.deleteFlight(key)
+			return res, err
+		}
+		// Успешный результат кешируем на cacheTime
+		go func(key K, cacheTime time.Duration) {
+			time.Sleep(cacheTime)
+			if c.warmTime == 0 {
+				c.deleteFlight(key)
+				return
+			}
+
+			// ставим метку на разогрев
+			c.markWarmingPending(key)
+
+			// ждём разогрева и применяем результат
+			time.Sleep(c.warmTime)
+			c.applyWarmResult(key)
+		}(key, c.cacheTime)
+
+		return res, err
+	}
+}
+
 // Do выполняет (или переиспользует) вычисление значения для key с учётом настроек кеша.
 // fn вызывается только один раз для каждого key в период cacheTime (если cacheTime > 0).
 // Если cacheErrors == false, ошибки не кешируются (последующие вызовы будут пытаться ещё раз).
@@ -93,48 +127,21 @@ func (c *Group[K, V]) Do(
 	key K,
 	fn func() (V, error),
 ) (V, error) {
-	cacheTime := c.cacheTime
-	cacheErrors := c.cacheErrors
-
+	fnWrapped := c.wrapFn(key, fn)
 	// Атомарно получаем существующий Flight или создаём новый
-	f, created := c.getOrCreateFlight(key, fn)
+	f, created := c.getOrCreateFlight(key, fnWrapped)
 
 	// Если мы не создавали Flight (присоединились к уже существующему),
 	// просто ждём результат и выходим — как и в исходной логике.
 	if !created {
-		c.startWarmingIfNeeded(key, fn)
+		c.startWarmingIfNeeded(key, fnWrapped)
 		return f.Wait()
 	}
 
-	// Мы — первый для этого key: запускаем fn
+	// Мы первые взяли блокировку на этот key: запускаем fn
 	f.Run()
 
-	// Ждём результат выполнения
-	res, err := f.Wait()
-
-	// Если cacheTime == 0 или (ошибка и мы не хотим кешировать ошибки) —
-	// не кешируем: сразу удаляем запись
-	if cacheTime == 0 || (!cacheErrors && err != nil) {
-		c.deleteFlight(key)
-		return res, err
-	}
-	// Успешный результат кешируем на cacheTime
-	go func(key K, cacheTime time.Duration) {
-		time.Sleep(cacheTime)
-		if c.warmTime == 0 {
-			c.deleteFlight(key)
-			return
-		}
-
-		// ставим метку на разогрев
-		c.markWarmingPending(key)
-
-		// ждём разогрева и применяем результат
-		time.Sleep(c.warmTime)
-		c.applyWarmResult(key)
-	}(key, cacheTime)
-
-	return res, err
+	return f.Wait()
 }
 
 // markWarmingPending помечает key как ожидающий прогрева.
@@ -150,10 +157,10 @@ func (c *Group[K, V]) applyWarmResult(key K) {
 	defer c.mu.Unlock()
 
 	if wf := c.warmings[key]; wf == nil {
-		// прогрев не запустился, очищаем
+		// прогрев не запускался, очищаем
 		delete(c.flights, key)
 	} else {
-		// прогрев запустился, перемещаем
+		// прогрев запускался, перемещаем
 		c.flights[key] = wf
 	}
 	delete(c.warmings, key)

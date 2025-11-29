@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -157,14 +156,7 @@ func main() {
 			time.Sleep(1 * time.Second)
 		}
 		wg.Wait()
-		log.Println("[SERVER] all requests completed, shutting down server...")
-
-		// Останавливаем сервер после завершения всех запросов
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := server.Shutdown(ctx); err != nil {
-			log.Printf("[SERVER] error shutting down: %v", err)
-		}
+		log.Println("[SERVER] all requests completed")
 	}()
 
 	log.Println("starting server on :8080")

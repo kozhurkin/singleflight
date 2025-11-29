@@ -191,10 +191,18 @@ func TestGroup_Do_WarmingReplacesCachedValue(t *testing.T) {
 	res3, err3 := g.Do("key", fnThird)
 	require.NoError(t, err3)
 	require.Equal(t, 2, res3)
-
 	require.Equal(t, int32(1), atomic.LoadInt32(&initialCalls), "initial fn should be called once")
 	require.Equal(t, int32(1), atomic.LoadInt32(&warmCalls), "warm fn should be called once by warm-up")
 	require.Equal(t, int32(0), atomic.LoadInt32(&thirdCalls), "third fn must not be called (should use warm result)")
+
+	// Дополнительно: проверяем, что тёплое значение тоже когда-то протухает.
+	time.Sleep(cacheTime + warmTime + 2*time.Millisecond)
+
+	res4, err4 := g.Do("key", fnThird)
+	require.NoError(t, err4)
+	require.Equal(t, 3, res4, "после TTL тёплое значение должно быть пересчитано")
+	require.Equal(t, int32(1), atomic.LoadInt32(&thirdCalls),
+		"fnThird должен быть вызван один раз после истечения TTL тёплого значения")
 }
 
 func TestGroup_Do_DifferentKeysIndependent(t *testing.T) {
@@ -246,7 +254,7 @@ func TestGroup_Do_WarmingWithoutRequests_CleansKey(t *testing.T) {
 	require.Equal(t, 1, res1)
 
 	// Ждём cacheTime + warmTime + небольшой запас, НО новых Do не вызываем.
-	time.Sleep(cacheTime + warmTime + time.Millisecond)
+	time.Sleep(cacheTime + warmTime + 2*time.Millisecond)
 
 	// Теперь ключ должен быть очищен, следующий вызов — новое вычисление.
 	res2, err2 := g.Do("key", fn)
