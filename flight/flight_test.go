@@ -241,7 +241,7 @@ func TestFlight_After_CalledAfterCompletion(t *testing.T) {
 
 	afterCalled := make(chan struct{})
 
-	go f.After(func(v int, err error) {
+	go f.OnDone(func(v int, err error) {
 		require.NoError(t, err)
 		require.Equal(t, 1, v)
 		close(afterCalled)
@@ -266,7 +266,7 @@ func TestFlight_After_AlreadyDone(t *testing.T) {
 
 	afterCalled := make(chan struct{})
 
-	go f.After(func(v int, err error) {
+	go f.OnDone(func(v int, err error) {
 		require.NoError(t, err)
 		require.Equal(t, 2, v)
 		close(afterCalled)
