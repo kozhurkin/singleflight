@@ -76,30 +76,24 @@ func (g *Group[K, V]) getOrCreateFlight(
 
 func (g *Group[K, V]) deleteKey(key K) {
 	g.mu.Lock()
+	defer g.mu.Unlock()
+
 	delete(g.flights, key)
 	if g.warmings != nil {
 		delete(g.warmings, key)
 	}
-	g.mu.Unlock()
 }
 
 // wrapWithCacheLifecycle оборачивает пользовательскую fn логикой кеширования и прогрева.
-func (g *Group[K, V]) wrapWithCacheLifecycle(
-	key K,
-	fn func() (V, error),
-) func() (V, error) {
-	return func() (V, error) {
-		res, err := fn()
-
+func (g *Group[K, V]) wrapWithCacheLifecycle(key K) func(res V, err error) {
+	return func(res V, err error) {
 		// Если кеш выключен, то не кешируем: освобождаем ключ
 		if g.cacheTime == 0 {
 			g.deleteKey(key)
-			return res, err
 		}
 		// Если ошибка и мы не хотим кешировать ошибки, то не кешируем: освобождаем ключ
 		if !g.cacheErrors && err != nil {
 			g.deleteKey(key)
-			return res, err
 		}
 		// Если нужно кешировать, то откладываем освобождение ключа на cacheTime асинхронно
 		go func(key K, cacheTime time.Duration) {
@@ -118,10 +112,10 @@ func (g *Group[K, V]) wrapWithCacheLifecycle(
 
 			// Ожидаем время прогрева и применяем результат, если прогрев случился
 			time.Sleep(g.warmTime)
-			g.applyWarmingResult(key)
-		}(key, g.cacheTime)
 
-		return res, err
+			// Снимаем метку ожидания прогрева
+			g.unmarkWarmingPending(key)
+		}(key, g.cacheTime)
 	}
 }
 
@@ -133,17 +127,20 @@ func (g *Group[K, V]) Do(
 	key K,
 	fn func() (V, error),
 ) (V, error) {
-	// Оборачиваем пользовательскую fn логикой кеширования и прогрева
-	fnWrapped := g.wrapWithCacheLifecycle(key, fn)
-
 	// Атомарно под одним lock:
 	//   - получаем основной Flight (существующий или новый),
 	//   - при необходимости создаём разогревочный Flight.
-	f, created, wf := g.getOrCreateFlight(key, fnWrapped)
+	f, created, wf := g.getOrCreateFlight(key, fn)
 
 	// Если под блокировкой был создан разогревочный Flight — запускаем его
 	if wf != nil {
-		go wf.Run()
+		go func() {
+			wf.Run()
+			// Применяем результат прогрева
+			if f := g.applyWarmingResult(key); f != nil {
+				f.After(g.wrapWithCacheLifecycle(key))
+			}
+		}()
 	}
 
 	// Если мы не создавали Flight (присоединились к уже существующему),
@@ -154,6 +151,8 @@ func (g *Group[K, V]) Do(
 
 	// Мы первые взяли блокировку на этот key: запускаем fn
 	f.Run()
+
+	f.After(g.wrapWithCacheLifecycle(key))
 
 	return f.Wait()
 }
@@ -168,8 +167,19 @@ func (g *Group[K, V]) markWarmingPending(key K) {
 	}
 }
 
+// unmarkWarmingPending снимает метку ожидания прогрева для key, если она была установлена.
+// Используется, когда необходимо отменить pending-прогрев, не затрагивая уже запущенный wf.
+func (g *Group[K, V]) unmarkWarmingPending(key K) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	if wf, ok := g.warmings[key]; ok && wf == nil {
+		delete(g.warmings, key)
+	}
+}
+
 // applyWarmingResult применяет результат прогрева (если был) или очищает ключ.
-func (g *Group[K, V]) applyWarmingResult(key K) {
+func (g *Group[K, V]) applyWarmingResult(key K) *flight.Flight[V] {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
@@ -177,16 +187,18 @@ func (g *Group[K, V]) applyWarmingResult(key K) {
 
 	if !ok {
 		// прогрев был применен параллельной горутиной, просто выходим
-		return
+		return nil
 	}
 
 	if wf == nil {
 		// прогрев не запускался, очищаем
 		delete(g.flights, key)
 		delete(g.warmings, key)
+		return nil
 	} else {
 		// прогрев запускался, перемещаем
 		g.flights[key] = wf
 		delete(g.warmings, key)
+		return wf
 	}
 }

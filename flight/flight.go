@@ -37,6 +37,15 @@ func (f *Flight[T]) Wait() (T, error) {
 	return f.res, f.err
 }
 
+// After блокируется до завершения fn (до закрытия канала done),
+// а затем синхронно выполняет переданную функцию fn, передавая
+// ему результат res и ошибку err.
+// Если нужна асинхронность, вызывающий код может использовать go f.After(fn).
+func (f *Flight[T]) After(fn func(res T, err error)) {
+	<-f.done
+	fn(f.res, f.err)
+}
+
 // Hits возвращает количество обращений к результату f.res через Wait.
 // Безопасно для конкурентного использования.
 func (f *Flight[T]) Hits() int64 {

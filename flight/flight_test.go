@@ -232,3 +232,50 @@ func TestFlight_Catch_NoErrorPassthrough(t *testing.T) {
 	require.Equal(t, value, res, "Catch() should keep original value when there is no error")
 	require.Equal(t, int32(0), atomic.LoadInt32(&called), "handler must not be called on success")
 }
+
+func TestFlight_After_CalledAfterCompletion(t *testing.T) {
+	f := flight.NewFlight(func() (int, error) {
+		time.Sleep(5 * time.Millisecond)
+		return 1, nil
+	})
+
+	afterCalled := make(chan struct{})
+
+	go f.After(func(v int, err error) {
+		require.NoError(t, err)
+		require.Equal(t, 1, v)
+		close(afterCalled)
+	})
+	go f.Run() // порядок запуска не важен: After ждёт Done
+
+	select {
+	case <-afterCalled:
+		// ok
+	case <-time.After(20 * time.Millisecond):
+		require.FailNow(t, "After callback was not called after Run completion")
+	}
+}
+
+func TestFlight_After_AlreadyDone(t *testing.T) {
+	f := flight.NewFlight(func() (int, error) {
+		return 2, nil
+	})
+
+	f.Run()
+	<-f.Done()
+
+	afterCalled := make(chan struct{})
+
+	go f.After(func(v int, err error) {
+		require.NoError(t, err)
+		require.Equal(t, 2, v)
+		close(afterCalled)
+	})
+
+	select {
+	case <-afterCalled:
+		// ok: callback should fire immediately for already-completed Flight
+	case <-time.After(5 * time.Millisecond):
+		require.FailNow(t, "After callback was not called for already-completed Flight")
+	}
+}
