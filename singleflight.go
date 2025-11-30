@@ -91,10 +91,12 @@ func (g *Group[K, V]) cacheFinalizerForKey(key K) func(res V, err error) {
 		// Если кеш выключен, то не кешируем: освобождаем ключ
 		if g.cacheTime == 0 {
 			g.deleteKey(key)
+			return
 		}
 		// Если ошибка и мы не хотим кешировать ошибки, то не кешируем: освобождаем ключ
 		if !g.cacheErrors && err != nil {
 			g.deleteKey(key)
+			return
 		}
 		// Если нужно кешировать, то откладываем освобождение ключа на cacheTime асинхронно
 		go func(key K, cacheTime time.Duration) {

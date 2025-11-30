@@ -87,7 +87,7 @@ func BenchmarkDo_Warming(b *testing.B) {
 func BenchmarkDo_MultipleKeys(b *testing.B) {
 	g := NewGroupWithCache[string, int](5*time.Millisecond, false, 0)
 
-	var calls int32
+	var calls, hits int32
 	fn := func() (int, error) {
 		atomic.AddInt32(&calls, 1)
 		time.Sleep(5 * time.Microsecond)
@@ -100,12 +100,13 @@ func BenchmarkDo_MultipleKeys(b *testing.B) {
 		for pb.Next() {
 			key := string(rune('a' + (i % 10)))
 			time.Sleep(1 * time.Millisecond)
+			atomic.AddInt32(&hits, 1)
 			go g.Do(key, fn)
 			i++
 		}
 	})
 
-	b.Log("calls", calls, "time", b.Elapsed())
+	b.Log("calls", calls, "hits", hits, "time", b.Elapsed())
 }
 
 // BenchmarkDo_HighConcurrency проверяет производительность при очень высокой
@@ -113,7 +114,7 @@ func BenchmarkDo_MultipleKeys(b *testing.B) {
 func BenchmarkDo_HighConcurrency(b *testing.B) {
 	g := NewGroup[string, int]()
 
-	var calls int32
+	var calls, hits int32
 	fn := func() (int, error) {
 		atomic.AddInt32(&calls, 1)
 		time.Sleep(10 * time.Millisecond) // Уменьшена задержка
@@ -124,13 +125,14 @@ func BenchmarkDo_HighConcurrency(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			time.Sleep(1 * time.Millisecond)
-			for j := 0; j < 1000; j++ {
+			for j := 0; j < 100; j++ {
+				atomic.AddInt32(&hits, 1)
 				go g.Do("key", fn)
 			}
 		}
 	})
 
-	b.Log("calls", calls, "time", b.Elapsed())
+	b.Log("calls", calls, "hits", hits, "time", b.Elapsed())
 }
 
 // BenchmarkDo_CacheErrors проверяет производительность при кешировании ошибок.
