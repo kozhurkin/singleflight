@@ -184,7 +184,7 @@ func TestGroup_Do_WarmingReplacesCachedValue(t *testing.T) {
 	require.Equal(t, 1, res2)
 
 	// Даём время прогреву завершиться и примениться.
-	time.Sleep(warmTime + time.Millisecond)
+	time.Sleep(time.Millisecond)
 
 	// Теперь Group должен отдавать результат прогретого Flight (значение 2),
 	// при этом fnThird вызываться не должен.
@@ -196,7 +196,7 @@ func TestGroup_Do_WarmingReplacesCachedValue(t *testing.T) {
 	require.Equal(t, int32(0), atomic.LoadInt32(&thirdCalls), "third fn must not be called (should use warm result)")
 
 	// Дополнительно: проверяем, что тёплое значение тоже когда-то протухает.
-	time.Sleep(cacheTime + warmTime + 2*time.Millisecond)
+	time.Sleep(cacheTime + warmTime + time.Millisecond)
 
 	res4, err4 := g.Do("key", fnThird)
 	require.NoError(t, err4)

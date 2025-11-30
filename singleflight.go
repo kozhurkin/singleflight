@@ -175,6 +175,7 @@ func (g *Group[K, V]) unmarkWarmingPending(key K) {
 
 	if wf, ok := g.warmings[key]; ok && wf == nil {
 		delete(g.warmings, key)
+		delete(g.flights, key)
 	}
 }
 
