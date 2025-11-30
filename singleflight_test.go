@@ -282,6 +282,48 @@ func TestGroup_Do_ZeroCacheTimeBehavesAsNoCache(t *testing.T) {
 	require.Equal(t, int32(2), atomic.LoadInt32(&calls))
 }
 
+// TestGroup_Do_ZeroCacheTime_HighConcurrencyBounded проверяет, что при cacheTime=0
+// число реальных вызовов fn под высокой конкурентностью остаётся разумно ограниченным.
+// Этот тест чувствителен к дополнительным фоновым таймерам/горутинкам в ветке cacheTime==0:
+// без return внутри cacheFinalizerForKey он, как правило, показывает сильно завышенное
+// значение calls и падает.
+func TestGroup_Do_ZeroCacheTime_HighConcurrencyBounded(t *testing.T) {
+	const (
+		duration  = 300 * time.Millisecond
+		fnLatency = 10 * time.Millisecond
+		maxCalls  = 40 // эмпирический порог: "нормально" ~30–40, при баге — сотни
+	)
+
+	// Кейс, который бьёт именно ветку cacheTime == 0.
+	g := NewGroupWithCache[string, int](0, false, 0)
+
+	var calls int32
+	fn := func() (int, error) {
+		atomic.AddInt32(&calls, 1)
+		time.Sleep(fnLatency)
+		return 42, nil
+	}
+
+	deadline := time.Now().Add(duration)
+	var wg sync.WaitGroup
+
+	for time.Now().Before(deadline) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _ = g.Do("key", fn)
+		}()
+		time.Sleep(1 * time.Millisecond)
+	}
+
+	wg.Wait()
+
+	got := atomic.LoadInt32(&calls)
+	if got > maxCalls {
+		t.Fatalf("too many fn calls under high concurrency with cacheTime=0: got=%d, max=%d", got, maxCalls)
+	}
+}
+
 // TestGroup_Warming_CallsCount — диагностический тест для оценки количества вызовов fn
 // при включённом прогреве. Он не проверяет строгие инварианты, а лишь логирует
 // число запусков fn за фиксированный интервал времени.
