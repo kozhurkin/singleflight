@@ -138,7 +138,7 @@ func TestGroup_Do_CachesErrorsWhenEnabled(t *testing.T) {
 	require.Equal(t, int32(1), atomic.LoadInt32(&calls), "error should be computed only once within TTL")
 
 	// После TTL ошибка должна быть пересчитана
-	time.Sleep(cacheTime + time.Millisecond)
+	time.Sleep(cacheTime + 2*time.Millisecond)
 
 	res3, err3 := g.Do("key", fn)
 	require.ErrorIs(t, err3, someErr)
@@ -280,4 +280,34 @@ func TestGroup_Do_ZeroCacheTimeBehavesAsNoCache(t *testing.T) {
 	require.Equal(t, 1, res1)
 	require.Equal(t, 2, res2)
 	require.Equal(t, int32(2), atomic.LoadInt32(&calls))
+}
+
+// TestGroup_Warming_CallsCount — диагностический тест для оценки количества вызовов fn
+// при включённом прогреве. Он не проверяет строгие инварианты, а лишь логирует
+// число запусков fn за фиксированный интервал времени.
+func TestGroup_Warming_CallsCount(t *testing.T) {
+	const (
+		cacheTime = 20 * time.Millisecond
+		warmTime  = 10 * time.Millisecond
+		duration  = 100 * time.Millisecond
+	)
+	startTime := time.Now()
+	g := NewGroupWithCache[string, int](cacheTime, false, warmTime)
+
+	var calls, hits int32
+	fn := func() (int, error) {
+		atomic.AddInt32(&calls, 1)
+		t.Logf("calls=%d hits=%d elapsed=%v", calls, hits, time.Since(startTime))
+		return 42, nil
+	}
+
+	deadline := time.Now().Add(duration)
+	for time.Now().Before(deadline) {
+		time.Sleep(1 * time.Millisecond)
+		atomic.AddInt32(&hits, 1)
+		go g.Do("key", fn)
+	}
+
+	t.Logf("calls=%d, hits=%d, cacheTime=%v, warmTime=%v, duration=%v",
+		calls, hits, cacheTime, warmTime, duration)
 }
