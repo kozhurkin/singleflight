@@ -1,4 +1,4 @@
-![singleflight+cache timeline](https://raw.githubusercontent.com/kozhurkin/singleflight/main/doc/timeline.jpg)
+![singleflight+cache timeline](https://raw.githubusercontent.com/kozhurkin/singleflight/main/doc/timeline.png)
 
 
 ## singleflight
