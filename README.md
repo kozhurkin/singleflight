@@ -1,3 +1,6 @@
+![singleflight+cache timeline](https://raw.githubusercontent.com/kozhurkin/singleflight/main/doc/timeline.jpg)
+
+
 ## singleflight
 
 **singleflight** — это небольшая Go‑библиотека для дедупликации запросов и опциональный in‑memory‑кеш с TTL и поддержкой прогрева.
