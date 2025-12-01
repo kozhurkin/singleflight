@@ -137,10 +137,10 @@ func BenchmarkDo_HighConcurrency(b *testing.B) {
 
 // BenchmarkDo_CacheErrors проверяет производительность при кешировании ошибок.
 func BenchmarkDo_CacheErrors(b *testing.B) {
-	const cacheTime = 10 * time.Second
+	const cacheTime = 10 * time.Millisecond
 	g := NewGroupWithCache[string, int](cacheTime, true, 0)
 
-	var calls int32
+	var calls, hits int32
 	fn := func() (int, error) {
 		atomic.AddInt32(&calls, 1)
 		return 0, nil // Симулируем ошибку
@@ -153,8 +153,11 @@ func BenchmarkDo_CacheErrors(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			_, _ = g.Do("key", fn)
+			atomic.AddInt32(&hits, 1)
 		}
 	})
+
+	b.Log("calls", calls, "hits", hits, "time", b.Elapsed())
 }
 
 // BenchmarkDo_RealWorldSimulation симулирует реальный сценарий использования:
@@ -166,7 +169,7 @@ func BenchmarkDo_RealWorldSimulation(b *testing.B) {
 	)
 	g := NewGroupWithCache[string, int](cacheTime, false, warmTime)
 
-	var calls int32
+	var calls, hits int32
 	fn := func() (int, error) {
 		atomic.AddInt32(&calls, 1)
 		// Симуляция запроса к внешнему API
@@ -180,10 +183,11 @@ func BenchmarkDo_RealWorldSimulation(b *testing.B) {
 		for pb.Next() {
 			key := string(rune('a' + (i % 10)))
 			time.Sleep(1 * time.Millisecond)
+			atomic.AddInt32(&hits, 1)
 			go g.Do(key, fn)
 			i++
 		}
 	})
 
-	b.Log("calls", calls, "time", b.Elapsed())
+	b.Log("calls", calls, "hits", hits, "time", b.Elapsed())
 }
