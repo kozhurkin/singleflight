@@ -5,6 +5,7 @@
 - **Дедупликация по ключу**: конкурентные запросы с одинаковым ключом выполняют `fn` ровно один раз и разделяют результат.
 - **Опциональный кеш** с TTL и поддержкой **прогрева (warm‑up)**.
 - **Генерики для ключа и значения** (`Group[K comparable, V any]`).
+- TODO
 
 ![singleflight+cache timeline](https://raw.githubusercontent.com/kozhurkin/singleflight/main/doc/timeline.png)
 
@@ -13,8 +14,8 @@
 В `cmd/example/main.go` показан реальный сценарий: сервис погоды, который ходит к внешнему API и кеширует результат по городу:
 
 ```go
-// Кеш: TTL 5 секунд, ошибки не кешируем, окно прогрева 2 секунды.
-cacheTime, cacheErrors, warmTime := 5*time.Second, false, 2*time.Second
+// Кеш: TTL 5 секунд, ошибки не кешируем (cacheErrors = 0), окно прогрева 2 секунды.
+cacheTime, cacheErrors, warmTime := 5*time.Second, 0, 2*time.Second
 cache := singleflight.NewGroupWithCache[string, Weather](cacheTime, cacheErrors, warmTime)
 
 mux.HandleFunc("/weather", func(w http.ResponseWriter, r *http.Request) {
@@ -51,6 +52,7 @@ mux.HandleFunc("/weather", func(w http.ResponseWriter, r *http.Request) {
 - по ключу `key` запускается ровно **одно** выполнение `fn`;
 - все конкурентные вызовы `Do(key, fn)` ждут этого выполнения и получают **один и тот же результат**;
 - опционально результат кладётся в кеш на `cacheTime`, чтобы вообще не дёргать `fn` в течение TTL.
+- TODO про окно прогрева.
 
 ---
 
@@ -106,15 +108,15 @@ func NewGroup[K comparable, V any]() *Group[K, V]
 
 ```go
 func NewGroupWithCache[K comparable, V any](
-    cacheTime   time.Duration, // TTL значения
-    cacheErrors bool,          // кешировать ли ошибки
+    cacheTime   time.Duration, // TTL успешного значения
+    cacheErrors time.Duration, // TTL ошибок (0 — ошибки не кешируются)
     warmTime    time.Duration, // окно прогрева
 ) *Group[K, V]
 ```
 
-- `cacheTime > 0` — включён кеш, результаты (и опционально ошибки) живут `cacheTime`;
-- `cacheErrors = false` — ошибки не кешируются, каждый новый вызов после ошибки заново выполняет `fn`;
-- `cacheErrors = true` — ошибки живут в кеше так же, как и успешные результаты;
+- `cacheTime > 0` — включён кеш, успешные результаты живут `cacheTime`;
+- `cacheErrors == 0` — ошибки не кешируются, каждый новый вызов после ошибки заново выполняет `fn`;
+- `cacheErrors > 0` — ошибки живут в кеше `cacheErrors` (своё TTL, независимо от `cacheTime`);
 - `warmTime > 0` — включён режим прогрева (warm‑up).
 
 #### Основной метод: `Do`
@@ -130,12 +132,12 @@ func (g *Group[K, V]) Do(
 - Если по `key` есть закешированный результат с неистёкшим `cacheTime` — он возвращается **без вызова `fn`**.
 - Если кеш пустой или протух:
   - `fn` выполняется один раз;
-  - результат кладётся в кеш (если `cacheTime > 0` и, для ошибок, `cacheErrors == true`).
+  - результат кладётся в кеш (если `cacheTime > 0`; для ошибок — если `cacheErrors > 0`).
 
 Поведение в разных режимах:
 
-- **`cacheTime == 0`** — поведение как у «чистого» singleflight: только дедупликация конкурентных вызовов, без кеша.
-- **`cacheErrors == false`** — ошибки не кешируются: каждый новый вызов после ошибки снова вызывает `fn`.
+– **`cacheTime == 0`** — поведение как у «чистого» singleflight: только дедупликация конкурентных вызовов, без кеша.
+- **`cacheErrors == 0`** — ошибки не кешируются: каждый новый вызов после ошибки снова вызывает `fn`.
 - **`warmTime == 0`** — кэш сбрасывается сразу по TTL, без прогрева.
 
 ---
@@ -189,7 +191,7 @@ func main() {
 
 ```go
 // TTL 5 секунд, ошибки не кешируем, прогрев отключён.
-g := singleflight.NewGroupWithCache[string, string](5*time.Second, false, 0)
+g := singleflight.NewGroupWithCache[string, string](5*time.Second, 0, 0)
 
 getUser := func(id string) (string, error) {
     return g.Do(id, func() (string, error) {
@@ -215,7 +217,7 @@ u2, _ := getUser("42")
 
 ```go
 // TTL 5 секунд, ошибки не кешируем, окно прогрева 2 секунды.
-g := singleflight.NewGroupWithCache[string, int](5*time.Second, false, 2*time.Second)
+g := singleflight.NewGroupWithCache[string, int](5*time.Second, 0, 2*time.Second)
 
 // Первый вызов вычисляет и кеширует значение 1.
 v1, _ := g.Do("key", func() (int, error) {

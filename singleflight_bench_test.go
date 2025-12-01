@@ -35,7 +35,7 @@ func BenchmarkDo_NoCache_Deduplication(b *testing.B) {
 // при повторных запросах (cache hit).
 func BenchmarkDo_WithCache_HitRate(b *testing.B) {
 	const cacheTime = 10 * time.Millisecond
-	g := NewGroupWithCache[string, int](cacheTime, false, 0)
+	g := NewGroupWithCache[string, int](cacheTime, 0, 0)
 
 	var calls, hits int32
 	fn := func() (int, error) {
@@ -62,7 +62,7 @@ func BenchmarkDo_Warming(b *testing.B) {
 		warmTime  = 5 * time.Millisecond
 	)
 
-	g := NewGroupWithCache[string, int](cacheTime, false, warmTime)
+	g := NewGroupWithCache[string, int](cacheTime, 0, warmTime)
 
 	var calls, hits int32
 	fn := func() (int, error) {
@@ -85,7 +85,7 @@ func BenchmarkDo_Warming(b *testing.B) {
 // BenchmarkDo_MultipleKeys проверяет производительность при работе
 // с множеством разных ключей одновременно.
 func BenchmarkDo_MultipleKeys(b *testing.B) {
-	g := NewGroupWithCache[string, int](5*time.Millisecond, false, 0)
+	g := NewGroupWithCache[string, int](5*time.Millisecond, 0, 0)
 
 	var calls, hits int32
 	fn := func() (int, error) {
@@ -138,7 +138,7 @@ func BenchmarkDo_HighConcurrency(b *testing.B) {
 // BenchmarkDo_CacheErrors проверяет производительность при кешировании ошибок.
 func BenchmarkDo_CacheErrors(b *testing.B) {
 	const cacheTime = 10 * time.Millisecond
-	g := NewGroupWithCache[string, int](cacheTime, true, 0)
+	g := NewGroupWithCache[string, int](cacheTime, cacheTime, 0)
 
 	var calls, hits int32
 	fn := func() (int, error) {
@@ -167,7 +167,7 @@ func BenchmarkDo_RealWorldSimulation(b *testing.B) {
 		cacheTime = 10 * time.Millisecond
 		warmTime  = 5 * time.Millisecond
 	)
-	g := NewGroupWithCache[string, int](cacheTime, false, warmTime)
+	g := NewGroupWithCache[string, int](cacheTime, 0, warmTime)
 
 	var calls, hits int32
 	fn := func() (int, error) {

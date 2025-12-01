@@ -79,8 +79,8 @@ func main() {
 	// Добавляем миллисекунды (и микросекунды) в таймстемпы логов
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
 
-	// Кеш: TTL 5 секунд, ошибки не кешируем, время прогрева 2 секунды
-	cache := singleflight.NewGroupWithCache[string, Weather](5*time.Second, false, 2*time.Second)
+	// Кеш: TTL 5 секунд, ошибки не кешируем (cacheErrors=0), время прогрева 2 секунды
+	cache := singleflight.NewGroupWithCache[string, Weather](5*time.Second, 0, 2*time.Second)
 
 	mux := http.NewServeMux()
 

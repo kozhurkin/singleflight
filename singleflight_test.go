@@ -64,7 +64,7 @@ func TestGroup_Do_NoCache_RecomputesEachTime(t *testing.T) {
 func TestGroup_Do_CacheSuccessResult(t *testing.T) {
 	const cacheTime = 5 * time.Millisecond
 
-	g := NewGroupWithCache[string, int](cacheTime, false, 0)
+	g := NewGroupWithCache[string, int](cacheTime, 0, 0)
 
 	var calls int32
 	fn := func() (int, error) {
@@ -94,7 +94,7 @@ func TestGroup_Do_CacheSuccessResult(t *testing.T) {
 func TestGroup_Do_DoesNotCacheErrorsWhenDisabled(t *testing.T) {
 	const cacheTime = 5 * time.Millisecond
 
-	g := NewGroupWithCache[string, int](cacheTime, false, 0)
+	g := NewGroupWithCache[string, int](cacheTime, 0, 0)
 
 	var calls int32
 	someErr := errors.New("boom")
@@ -116,7 +116,7 @@ func TestGroup_Do_DoesNotCacheErrorsWhenDisabled(t *testing.T) {
 func TestGroup_Do_CachesErrorsWhenEnabled(t *testing.T) {
 	const cacheTime = 5 * time.Millisecond
 
-	g := NewGroupWithCache[string, int](cacheTime, true, 0)
+	g := NewGroupWithCache[string, int](cacheTime, cacheTime, 0)
 
 	var calls int32
 	someErr := errors.New("boom")
@@ -146,13 +146,81 @@ func TestGroup_Do_CachesErrorsWhenEnabled(t *testing.T) {
 	require.Equal(t, int32(2), atomic.LoadInt32(&calls), "error should be recomputed after TTL")
 }
 
+// TestGroup_Do_SuccessAndErrorHaveDifferentTTL проверяет, что успешный результат
+// и ошибка кешируются на разные времена (cacheTime и cacheErrors соответственно).
+func TestGroup_Do_SuccessAndErrorHaveDifferentTTL(t *testing.T) {
+	const (
+		cacheTime   = 30 * time.Millisecond
+		cacheErrors = 5 * time.Millisecond
+	)
+
+	g := NewGroupWithCache[string, int](cacheTime, cacheErrors, 0)
+
+	// Успешный результат: должен жить cacheTime, а не cacheErrors.
+	var successCalls int32
+	successFn := func() (int, error) {
+		return int(atomic.AddInt32(&successCalls, 1)), nil
+	}
+
+	// Первый вызов вычисляет и кеширует результат.
+	ok1, err1 := g.Do("ok", successFn)
+	require.NoError(t, err1)
+	require.Equal(t, 1, ok1)
+
+	// Повторный вызов сразу — кеш.
+	ok2, err2 := g.Do("ok", successFn)
+	require.NoError(t, err2)
+	require.Equal(t, 1, ok2)
+	require.Equal(t, int32(1), atomic.LoadInt32(&successCalls), "success should be computed once")
+
+	// Ждём больше cacheErrors, но меньше cacheTime — успешный результат всё ещё
+	// должен быть в кеше, иначе он бы жил по cacheErrors, а не по cacheTime.
+	time.Sleep(2 * cacheErrors)
+
+	ok3, err3 := g.Do("ok", successFn)
+	require.NoError(t, err3)
+	require.Equal(t, 1, ok3)
+	require.Equal(t, int32(1), atomic.LoadInt32(&successCalls),
+		"success result must still be cached after cacheErrors (TTL is cacheTime)")
+
+	// Ошибка: должна жить cacheErrors, а не cacheTime.
+	var errorCalls int32
+	someErr := errors.New("boom-diff-ttl")
+	errorFn := func() (int, error) {
+		atomic.AddInt32(&errorCalls, 1)
+		return 0, someErr
+	}
+
+	// Первый вызов вычисляет и кеширует ошибку.
+	errRes1, errE1 := g.Do("err", errorFn)
+	require.ErrorIs(t, errE1, someErr)
+	require.Equal(t, 0, errRes1)
+	require.Equal(t, int32(1), atomic.LoadInt32(&errorCalls))
+
+	// Повторный вызов до истечения cacheErrors — ошибка из кеша.
+	errRes2, errE2 := g.Do("err", errorFn)
+	require.ErrorIs(t, errE2, someErr)
+	require.Equal(t, 0, errRes2)
+	require.Equal(t, int32(1), atomic.LoadInt32(&errorCalls))
+
+	// Ждём чуть больше cacheErrors, но существенно меньше cacheTime.
+	time.Sleep(cacheErrors + 2*time.Millisecond)
+
+	// Теперь ошибка должна быть пересчитана, иначе она бы жила по cacheTime.
+	errRes3, errE3 := g.Do("err", errorFn)
+	require.ErrorIs(t, errE3, someErr)
+	require.Equal(t, 0, errRes3)
+	require.Equal(t, int32(2), atomic.LoadInt32(&errorCalls),
+		"error must be recomputed after cacheErrors even though cacheTime is larger")
+}
+
 func TestGroup_Do_WarmingReplacesCachedValue(t *testing.T) {
 	const (
 		cacheTime = 5 * time.Millisecond
 		warmTime  = 3 * time.Millisecond
 	)
 
-	g := NewGroupWithCache[string, int](cacheTime, false, warmTime)
+	g := NewGroupWithCache[string, int](cacheTime, 0, warmTime)
 
 	var initialCalls, warmCalls, thirdCalls int32
 
@@ -241,7 +309,7 @@ func TestGroup_Do_WarmingWithoutRequests_CleansKey(t *testing.T) {
 		warmTime  = 3 * time.Millisecond
 	)
 
-	g := NewGroupWithCache[string, int](cacheTime, false, warmTime)
+	g := NewGroupWithCache[string, int](cacheTime, 0, warmTime)
 
 	var calls int32
 	fn := func() (int, error) {
@@ -265,7 +333,7 @@ func TestGroup_Do_WarmingWithoutRequests_CleansKey(t *testing.T) {
 }
 
 func TestGroup_Do_ZeroCacheTimeBehavesAsNoCache(t *testing.T) {
-	g := NewGroupWithCache[string, int](0, true, time.Second)
+	g := NewGroupWithCache[string, int](0, 0, time.Second)
 
 	var calls int32
 	fn := func() (int, error) {
@@ -295,7 +363,7 @@ func TestGroup_Do_ZeroCacheTime_HighConcurrencyBounded(t *testing.T) {
 	)
 
 	// Кейс, который бьёт именно ветку cacheTime == 0.
-	g := NewGroupWithCache[string, int](0, false, 0)
+	g := NewGroupWithCache[string, int](0, 0, 0)
 
 	var calls int32
 	fn := func() (int, error) {
@@ -334,7 +402,7 @@ func TestGroup_Warming_CallsCount(t *testing.T) {
 		duration  = 100 * time.Millisecond
 	)
 	startTime := time.Now()
-	g := NewGroupWithCache[string, int](cacheTime, false, warmTime)
+	g := NewGroupWithCache[string, int](cacheTime, 0, warmTime)
 
 	var calls, hits int32
 	fn := func() (int, error) {

@@ -15,7 +15,7 @@ type Group[K comparable, V any] struct {
 	flights     map[K]*flight.Flight[V]
 	warmings    map[K]*flight.Flight[V]
 	cacheTime   time.Duration
-	cacheErrors bool
+	cacheErrors time.Duration
 	warmTime    time.Duration
 }
 
@@ -27,9 +27,10 @@ func NewGroup[K comparable, V any]() *Group[K, V] {
 }
 
 // NewGroupWithCache создаёт новый Group с параметрами кеширования.
-// cacheTime задаёт TTL кеша, cacheErrors определяет, нужно ли кешировать ошибки.
+// cacheTime задаёт TTL кеша для успешных результатов.
+// cacheErrors задаёт TTL кеша для ошибок (0 — ошибки не кешируются).
 // warmTime задаёт время ожидания прогрева перед удалением ключа из кеша.
-func NewGroupWithCache[K comparable, V any](cacheTime time.Duration, cacheErrors bool, warmTime time.Duration) *Group[K, V] {
+func NewGroupWithCache[K comparable, V any](cacheTime time.Duration, cacheErrors time.Duration, warmTime time.Duration) *Group[K, V] {
 	return &Group[K, V]{
 		flights:     make(map[K]*flight.Flight[V]),
 		warmings:    make(map[K]*flight.Flight[V]),
@@ -93,14 +94,20 @@ func (g *Group[K, V]) cacheFinalizerForKey(key K) func(res V, err error) {
 			g.deleteKey(key)
 			return
 		}
-		// Если ошибка и мы не хотим кешировать ошибки, то не кешируем: освобождаем ключ
-		if !g.cacheErrors && err != nil {
+		// Ошибка и cacheErrors == 0: не кешируем ошибку, сразу освобождаем ключ
+		if err != nil && g.cacheErrors == 0 {
 			g.deleteKey(key)
 			return
 		}
-		// Если нужно кешировать, то откладываем освобождение ключа на cacheTime асинхронно
-		go func(key K, cacheTime time.Duration) {
-			time.Sleep(cacheTime)
+
+		// Кешируем результат: успешный — на cacheTime,
+		// ошибочный — на cacheErrors.
+		go func(key K, err error) {
+			if err == nil {
+				time.Sleep(g.cacheTime)
+			} else {
+				time.Sleep(g.cacheErrors)
+			}
 
 			// Если прогрев выключен, то не прогреваем: освобождаем ключ
 			if g.warmTime == 0 {
@@ -118,14 +125,14 @@ func (g *Group[K, V]) cacheFinalizerForKey(key K) func(res V, err error) {
 
 			// Если прогрев так и не стартовал — очищаем pending-состояние и удаляем ключ из кеша
 			g.clearWarmupPending(key)
-		}(key, g.cacheTime)
+		}(key, err)
 	}
 }
 
 // Do выполняет (или переиспользует) вычисление значения для key с учётом настроек кеша.
 // fn вызывается только один раз для каждого key в период cacheTime (если cacheTime > 0).
-// Если cacheErrors == false, ошибки не кешируются (последующие вызовы будут пытаться ещё раз).
-// Если cacheErrors == true, то и успешные результаты, и ошибки кешируются до истечения cacheTime.
+// Ошибки кешируются отдельно: при cacheErrors == 0 ошибки не кешируются (последующие
+// вызовы будут пытаться ещё раз), при cacheErrors > 0 ошибки живут в кеше cacheErrors.
 func (g *Group[K, V]) Do(
 	key K,
 	fn func() (V, error),
