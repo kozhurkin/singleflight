@@ -34,8 +34,8 @@ func BenchmarkDo_NoCache_Deduplication(b *testing.B) {
 // BenchmarkDo_WithCache_HitRate проверяет производительность доступа к кешу
 // при повторных запросах (cache hit).
 func BenchmarkDo_WithCache_HitRate(b *testing.B) {
-	const cacheTime = 10 * time.Millisecond
-	g := NewGroupWithCache[string, int](cacheTime, 0, 0)
+	const resultTTL = 10 * time.Millisecond
+	g := NewGroupWithCache[string, int](resultTTL, 0, 0)
 
 	var calls, hits int32
 	fn := func() (int, error) {
@@ -58,11 +58,11 @@ func BenchmarkDo_WithCache_HitRate(b *testing.B) {
 // BenchmarkDo_Warming проверяет производительность механизма прогрева.
 func BenchmarkDo_Warming(b *testing.B) {
 	const (
-		cacheTime = 10 * time.Millisecond
-		warmTime  = 5 * time.Millisecond
+		resultTTL    = 10 * time.Millisecond
+		warmupWindow = 5 * time.Millisecond
 	)
 
-	g := NewGroupWithCache[string, int](cacheTime, 0, warmTime)
+	g := NewGroupWithCache[string, int](resultTTL, 0, warmupWindow)
 
 	var calls, hits int32
 	fn := func() (int, error) {
@@ -137,8 +137,11 @@ func BenchmarkDo_HighConcurrency(b *testing.B) {
 
 // BenchmarkDo_CacheErrors проверяет производительность при кешировании ошибок.
 func BenchmarkDo_CacheErrors(b *testing.B) {
-	const cacheTime = 10 * time.Millisecond
-	g := NewGroupWithCache[string, int](cacheTime, cacheTime, 0)
+	const (
+		resultTTL = 10 * time.Millisecond
+		errorTTL  = 10 * time.Millisecond
+	)
+	g := NewGroupWithCache[string, int](resultTTL, errorTTL, 0)
 
 	var calls, hits int32
 	fn := func() (int, error) {
@@ -164,10 +167,10 @@ func BenchmarkDo_CacheErrors(b *testing.B) {
 // множество разных ключей, смешанная нагрузка, кеширование.
 func BenchmarkDo_RealWorldSimulation(b *testing.B) {
 	const (
-		cacheTime = 10 * time.Millisecond
-		warmTime  = 5 * time.Millisecond
+		resultTTL    = 10 * time.Millisecond
+		warmupWindow = 5 * time.Millisecond
 	)
-	g := NewGroupWithCache[string, int](cacheTime, 0, warmTime)
+	g := NewGroupWithCache[string, int](resultTTL, 0, warmupWindow)
 
 	var calls, hits int32
 	fn := func() (int, error) {
