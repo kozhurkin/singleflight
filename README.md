@@ -13,8 +13,10 @@
 В `cmd/example/main.go` показан реальный сценарий: сервис погоды, который ходит к внешнему API и кеширует результат по городу:
 
 ```go
-// Кеш: TTL 5 секунд, ошибки не кешируем, прогрев 2 секунды.
-cache := singleflight.NewGroupWithCache[string, Weather](5*time.Second, false, 2*time.Second)
+// Кеш: TTL 5 секунд, ошибки не кешируем, окно прогрева 2 секунды.
+cacheTime, warmTime := 5*time.Second, 2*time.Second
+cacheErrors := false
+cache := singleflight.NewGroupWithCache[string, Weather](cacheTime, cacheErrors, warmTime)
 
 mux.HandleFunc("/weather", func(w http.ResponseWriter, r *http.Request) {
     city := r.URL.Query().Get("city")
@@ -31,7 +33,7 @@ mux.HandleFunc("/weather", func(w http.ResponseWriter, r *http.Request) {
 - внешний API вызывается один раз на всю «волну» запросов;
 - результат кешируется на время TTL;
 - перед истечением TTL значение может быть заранее обновлено за счёт прогрева;
-- если запросы к ресурсу прекращаются, ключ удаляется из кеша и больше не прогревается.
+- если запросы к ресурсу прекращаются, ключ удаляется из кеша.
 
 ---
 
