@@ -8,8 +8,6 @@
 
 ![singleflight+cache timeline](https://raw.githubusercontent.com/kozhurkin/singleflight/main/doc/timeline.png)
 
-
-
 ## Пример использования в HTTP‑сервисе
 
 В `cmd/example/main.go` показан реальный сценарий: сервис погоды, который ходит к внешнему API и кеширует результат по городу:
