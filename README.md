@@ -6,8 +6,6 @@
 - **Опциональный кеш** с TTL и поддержкой **прогрева (warm‑up)**.
 - **Генерики для ключа и значения** (`Group[K comparable, V any]`).
 
----
-
 ![singleflight+cache timeline](https://raw.githubusercontent.com/kozhurkin/singleflight/main/doc/timeline.png)
 
 
