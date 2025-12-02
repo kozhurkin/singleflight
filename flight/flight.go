@@ -86,17 +86,17 @@ func (f *Flight[T]) RunAsync() bool {
 	return f.run(true)
 }
 
-// Then создаёт новый Flight[T], который будет выполнять функцию next после завершения текущего Flight.
-// Функция next получает результат текущего выполнения и возвращает новое значение типа T и ошибку.
-// Если текущий Flight завершился с ошибкой, next не вызывается, и новый Flight сразу возвращает эту ошибку.
+// Then создаёт новый Flight[T], который будет выполнять функцию fn после завершения текущего Flight.
+// Функция fn получает результат текущего выполнения и возвращает новое значение типа T и ошибку.
+// Если текущий Flight завершился с ошибкой, fn не вызывается, и новый Flight сразу возвращает эту ошибку.
 // Исходный Flight автоматически запускается синхронно для начала выполнения цепочки.
-func (f *Flight[T]) Then(next func(T) (T, error)) *Flight[T] {
-	return ThenAny(f, next)
+func (f *Flight[T]) Then(fn func(T) (T, error)) *Flight[T] {
+	return ThenAny(f, fn)
 }
 
-// ThenAny создаёт новый Flight[R] из Flight[T], выполняя next после завершения f.
+// ThenAny создаёт новый Flight[R] из Flight[T], выполняя fn после завершения f.
 // Это свободная функция (а не метод), потому что в Go методы не могут иметь собственные параметров типа.
-func ThenAny[T, R any](f *Flight[T], next func(T) (R, error)) *Flight[R] {
+func ThenAny[T, R any](f *Flight[T], fn func(T) (R, error)) *Flight[R] {
 	return NewFlight(func() (R, error) {
 		f.Run()
 		res, err := f.Wait()
@@ -104,7 +104,7 @@ func ThenAny[T, R any](f *Flight[T], next func(T) (R, error)) *Flight[R] {
 			var zero R
 			return zero, err
 		}
-		return next(res)
+		return fn(res)
 	})
 }
 
@@ -120,5 +120,17 @@ func (f *Flight[T]) Catch(handler func(error) (T, error)) *Flight[T] {
 			return handler(err)
 		}
 		return res, nil
+	})
+}
+
+// Handle создаёт новый Flight[T], который всегда вызывает fn с результатом и ошибкой
+// исходного Flight и возвращает то, что вернёт fn.
+// В отличие от Then и Catch, fn получает и res и err одновременно и сам решает,
+// как их интерпретировать.
+func (f *Flight[T]) Handle(fn func(res T, err error) (T, error)) *Flight[T] {
+	return NewFlight(func() (T, error) {
+		f.Run()
+		res, err := f.Wait()
+		return fn(res, err)
 	})
 }
