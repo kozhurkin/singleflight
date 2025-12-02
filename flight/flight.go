@@ -1,9 +1,13 @@
 package flight
 
 import (
+	"errors"
 	"sync"
 	"sync/atomic"
 )
+
+// ErrCanceled возвращается, если Flight был отменён до запуска fn.
+var ErrCanceled = errors.New("flight: canceled")
 
 // Flight хранит состояние одного вычисления значения типа T.
 // Позволяет дождаться результата через Wait и гарантирует единичный запуск fn.
@@ -14,7 +18,9 @@ type Flight[T any] struct {
 	fn   func() (T, error)
 	once sync.Once
 
-	hits int64
+	hits     uint64
+	started  uint64
+	canceled uint64
 }
 
 // NewFlight создаёт новый Flight для выполнения функции fn.
@@ -33,7 +39,7 @@ func (f *Flight[T]) Done() <-chan struct{} {
 // Wait блокируется до завершения fn и возвращает результат и ошибку.
 func (f *Flight[T]) Wait() (T, error) {
 	<-f.done
-	atomic.AddInt64(&f.hits, 1)
+	atomic.AddUint64(&f.hits, 1)
 	return f.res, f.err
 }
 
@@ -49,7 +55,38 @@ func (f *Flight[T]) OnDone(fn func(res T, err error)) {
 // Hits возвращает количество обращений к результату f.res через Wait.
 // Безопасно для конкурентного использования.
 func (f *Flight[T]) Hits() int64 {
-	return atomic.LoadInt64(&f.hits)
+	return int64(atomic.LoadUint64(&f.hits))
+}
+
+// Started возвращает true, если выполнение fn было запущено (синхронно или асинхронно).
+// Безопасно для конкурентного использования.
+func (f *Flight[T]) Started() bool {
+	return atomic.LoadUint64(&f.started) == 1
+}
+
+// Canceled возвращает true, если Flight был отменён до запуска fn.
+// Безопасно для конкурентного использования.
+func (f *Flight[T]) Canceled() bool {
+	return atomic.LoadUint64(&f.canceled) == 1
+}
+
+// Cancel пытается отменить Flight до запуска fn.
+// Если отмена удалась (fn ещё не запускался), возвращает true и устанавливает ошибку ErrCanceled.
+// Если fn уже был запущен или завершён, возвращает false и ничего не меняет.
+func (f *Flight[T]) Cancel() bool {
+	canceled := false
+
+	f.once.Do(func() {
+		canceled = true
+		atomic.StoreUint64(&f.canceled, 1)
+
+		var zero T
+		f.res = zero
+		f.err = ErrCanceled
+		close(f.done)
+	})
+
+	return canceled
 }
 
 // execute выполняет функцию fn и закрывает канал done.
@@ -65,6 +102,7 @@ func (f *Flight[T]) run(async bool) bool {
 	first := false
 	f.once.Do(func() {
 		first = true
+		atomic.StoreUint64(&f.started, 1)
 		if async {
 			go f.execute()
 		} else {
