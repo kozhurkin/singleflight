@@ -279,3 +279,151 @@ func TestFlight_After_AlreadyDone(t *testing.T) {
 		require.FailNow(t, "After callback was not called for already-completed Flight")
 	}
 }
+
+func TestFlight_StartedFlag(t *testing.T) {
+	f := flight.NewFlight(func() (int, error) {
+		time.Sleep(5 * time.Millisecond)
+		return 1, nil
+	})
+
+	require.False(t, f.Started(), "Started() should be false before Run")
+
+	ok := f.Run()
+	require.True(t, ok, "first Run() should return true")
+	require.True(t, f.Started(), "Started() should be true after Run")
+
+	// Дополнительные вызовы Run не должны менять Started().
+	ok = f.Run()
+	require.False(t, ok, "second Run() should return false")
+	require.True(t, f.Started(), "Started() should remain true after repeated Run")
+}
+
+func TestFlight_RunAsyncOnce(t *testing.T) {
+	var calls int32
+
+	f := flight.NewFlight(func() (int, error) {
+		atomic.AddInt32(&calls, 1)
+		time.Sleep(5 * time.Millisecond)
+		return 42, nil
+	})
+
+	const goroutines = 20
+	var wg sync.WaitGroup
+	var trueCount int32
+
+	for i := 0; i < goroutines; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if f.RunAsync() {
+				atomic.AddInt32(&trueCount, 1)
+			}
+		}()
+	}
+
+	wg.Wait()
+	<-f.Done()
+
+	require.Equal(t, int32(1), atomic.LoadInt32(&calls), "fn should be called exactly once with RunAsync")
+	require.Equal(t, int32(1), atomic.LoadInt32(&trueCount), "exactly one RunAsync call should return true")
+	require.True(t, f.Started(), "Started() should be true after RunAsync")
+}
+
+func TestFlight_CancelBeforeRun(t *testing.T) {
+	var calls int32
+
+	f := flight.NewFlight(func() (int, error) {
+		atomic.AddInt32(&calls, 1)
+		return 123, nil
+	})
+
+	require.False(t, f.Started(), "Started() should be false before Run or Cancel")
+	require.False(t, f.Canceled(), "Canceled() should be false before Cancel")
+
+	ok := f.Cancel()
+	require.True(t, ok, "first Cancel() before Run should return true")
+	require.True(t, f.Canceled(), "Canceled() should be true after successful Cancel")
+	require.False(t, f.Started(), "Started() should remain false after Cancel before Run")
+
+	ok = f.Cancel()
+	require.False(t, ok, "second Cancel() should return false")
+
+	// fn не должен был вызываться.
+	require.Equal(t, int32(0), atomic.LoadInt32(&calls), "fn must not be called if Flight was canceled before Run")
+
+	// Канал Done должен быть закрыт.
+	select {
+	case <-f.Done():
+		// ok
+	default:
+		require.FailNow(t, "Done should be closed after Cancel")
+	}
+
+	v, err := f.Wait()
+	require.ErrorIs(t, err, flight.ErrCanceled, "Wait() should return ErrCanceled after Cancel")
+	require.Equal(t, 0, v, "Wait() should return zero value after Cancel")
+}
+
+func TestFlight_CancelAfterRun(t *testing.T) {
+	var calls int32
+
+	f := flight.NewFlight(func() (int, error) {
+		atomic.AddInt32(&calls, 1)
+		time.Sleep(5 * time.Millisecond)
+		return 42, nil
+	})
+
+	require.True(t, f.RunAsync(), "first RunAsync() should return true")
+
+	// Ждём, пока запуск зафиксируется.
+	require.Eventually(t, func() bool {
+		return f.Started()
+	}, 100*time.Millisecond, 1*time.Millisecond, "Started() should eventually become true after RunAsync")
+
+	ok := f.Cancel()
+	require.False(t, ok, "Cancel() after Run should return false")
+	require.False(t, f.Canceled(), "Canceled() should remain false if Cancel called after Run")
+
+	v, err := f.Wait()
+	require.NoError(t, err, "Wait() should not return error when Cancel after Run")
+	require.Equal(t, 42, v, "Wait() should return fn result when Cancel after Run")
+	require.Equal(t, int32(1), atomic.LoadInt32(&calls), "fn should still be called exactly once")
+}
+
+func TestFlight_Handle_Success(t *testing.T) {
+	base := flight.NewFlight(func() (int, error) {
+		return 10, nil
+	})
+
+	handled := base.Handle(func(res int, err error) (int, error) {
+		require.NoError(t, err, "base error should be nil in Handle on success")
+		require.Equal(t, 10, res, "Handle should receive original result")
+		return res * 2, nil
+	})
+
+	handled.Run()
+	v, err := handled.Wait()
+
+	require.NoError(t, err, "Handle() chain should not return error on success")
+	require.Equal(t, 20, v, "Handle() should be able to transform the result")
+}
+
+func TestFlight_Handle_ErrorRecovery(t *testing.T) {
+	someErr := errors.New("boom")
+
+	base := flight.NewFlight(func() (int, error) {
+		return 0, someErr
+	})
+
+	handled := base.Handle(func(res int, err error) (int, error) {
+		require.ErrorIs(t, err, someErr, "Handle should receive original error")
+		require.Equal(t, 0, res, "Handle should receive zero result on error")
+		return 999, nil
+	})
+
+	handled.Run()
+	v, err := handled.Wait()
+
+	require.NoError(t, err, "Handle() should be able to recover from error")
+	require.Equal(t, 999, v, "Handle() should return recovered value")
+}
