@@ -15,6 +15,7 @@
 ```go
 // Кеш: TTL 5 секунд, ошибки не кешируем (errorTTL = 0), окно прогрева 2 секунды.
 resultTTL, errorTTL, warmupWindow := 5*time.Second, 0, 2*time.Second
+
 cache := singleflight.NewGroupWithCache[string, Weather](resultTTL, errorTTL, warmupWindow)
 
 mux.HandleFunc("/weather", func(w http.ResponseWriter, r *http.Request) {
