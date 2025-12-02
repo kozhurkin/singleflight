@@ -34,7 +34,6 @@ mux.HandleFunc("/weather", func(w http.ResponseWriter, r *http.Request) {
 - перед истечением TTL значение может быть заранее обновлено за счёт прогрева;
 - если запросы к ресурсу прекращаются, ключ удаляется из кеша.
 
----
 
 ## Чем эта реализация выгодно отличается от стандартной
 
@@ -56,7 +55,6 @@ mux.HandleFunc("/weather", func(w http.ResponseWriter, r *http.Request) {
 
 При этом API остаётся простым, совместимым по идее со стандартным `singleflight.Group`.
 
----
 
 ## Установка
 
@@ -66,10 +64,8 @@ go get github.com/kozhurkin/singleflight
 
 Репозиторий: [github.com/kozhurkin/singleflight](https://github.com/kozhurkin/singleflight)
 
----
 
 ## API
-
 
 #### Конструктор без кеша (только дедупликация):
 
