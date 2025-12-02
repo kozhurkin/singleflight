@@ -79,7 +79,7 @@ func main() {
 	// Добавляем миллисекунды (и микросекунды) в таймстемпы логов
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
 
-	// Кеш: TTL 5 секунд, ошибки не кешируем (errorTTL=0), окно прогрева 2 секунды
+	// Кеш: TTL 5 секунд, ошибки не кешируем, время прогрева 2 секунды
 	cache := singleflight.NewGroupWithCache[string, Weather](5*time.Second, 0, 2*time.Second)
 
 	mux := http.NewServeMux()
@@ -124,32 +124,33 @@ func main() {
 		cities := []string{"spb", "spb", "moscow", "moscow", "london", "spb", "kiev"}
 
 		for round := 0; round < 5; round++ {
-			r := round
+			round := round
 			for _, city := range cities {
+				city := city
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
 					u := "http://localhost:8080/weather?city=" + url.QueryEscape(city)
 					resp, err := client.Get(u)
 					if err != nil {
-						log.Printf("[CLIENT] round=%d city=%s error=%v", r, city, err)
+						log.Printf("[CLIENT] round=%d city=%s error=%v", round, city, err)
 						return
 					}
 					defer resp.Body.Close()
 
 					if resp.StatusCode != http.StatusOK {
 						body, _ := io.ReadAll(resp.Body)
-						log.Printf("[CLIENT] round=%d city=%s status=%d body=%q", r, city, resp.StatusCode, string(body))
+						log.Printf("[CLIENT] round=%d city=%s status=%d body=%q", round, city, resp.StatusCode, string(body))
 						return
 					}
 
 					var w Weather
 					if err := json.NewDecoder(resp.Body).Decode(&w); err != nil {
-						log.Printf("[CLIENT] round=%d city=%s status=%d decode_error=%v", r, city, resp.StatusCode, err)
+						log.Printf("[CLIENT] round=%d city=%s status=%d decode_error=%v", round, city, resp.StatusCode, err)
 						return
 					}
 
-					log.Printf("[CLIENT] round=%d city=%s status=%d temp=%.2f°C", r, city, resp.StatusCode, w.CurrentWeather.Temperature)
+					log.Printf("[CLIENT] round=%d city=%s status=%d temp=%.2f°C", round, city, resp.StatusCode, w.CurrentWeather.Temperature)
 				}()
 				time.Sleep(100 * time.Millisecond)
 			}
