@@ -1,5 +1,5 @@
 
-[![pipers status](https://github.com/kozhurkin/singleflight/actions/workflows/tests.yml/badge.svg)](https://github.com/kozhurkin/singleflight/actions)
+[![CI Status](https://github.com/kozhurkin/singleflight/actions/workflows/ci.yml/badge.svg)](https://github.com/kozhurkin/singleflight/actions)
 [![GitHub Release](https://img.shields.io/github/release/kozhurkin/singleflight.svg)]()
 
 ## singleflight
