@@ -89,5 +89,8 @@ func NewGroupWithCache[K comparable, V any](
 #### Основной метод: `Do`
 
 ```go
-func (g *Group[K, V]) Do(key K, fn func() (V, error)) (V, error)
+func (g *Group[K, V]) Do(
+    key K,
+    fn func() (V, error),
+) (V, error)
 ```
