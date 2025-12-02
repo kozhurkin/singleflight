@@ -1,7 +1,3 @@
-
-[![CI Status](https://github.com/kozhurkin/singleflight/actions/workflows/ci.yml/badge.svg)](https://github.com/kozhurkin/singleflight/actions)
-[![GitHub Release](https://img.shields.io/github/release/kozhurkin/singleflight.svg)]()
-
 ## singleflight
 
 Это небольшая Go‑библиотека для дедупликации запросов с опциональным in‑memory‑кешем с TTL и поддержкой прогрева (warm‑up).
@@ -76,3 +72,7 @@ func (g *Group[K, V]) Do(
     fn func() (V, error),
 ) (V, error)
 ```
+
+
+[![CI Status](https://github.com/kozhurkin/singleflight/actions/workflows/ci.yml/badge.svg)](https://github.com/kozhurkin/singleflight/actions)
+[![GitHub Release](https://img.shields.io/github/release/kozhurkin/singleflight.svg)]()
