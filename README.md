@@ -1,3 +1,7 @@
+
+[![pipers status](https://github.com/kozhurkin/pipers/actions/workflows/tests.yml/badge.svg)](https://github.com/kozhurkin/singleflight/actions)
+[![GitHub Release](https://img.shields.io/github/release/kozhurkin/singleflight.svg)]()
+
 ## singleflight
 
 Это небольшая Go‑библиотека для дедупликации запросов с опциональным in‑memory‑кешем с TTL и поддержкой прогрева (warm‑up).
