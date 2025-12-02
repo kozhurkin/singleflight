@@ -76,7 +76,7 @@ go get github.com/kozhurkin/singleflight
 ```go
 func NewGroup[K comparable, V any]() *Group[K, V]
 ```
-#### Конструктор с кешем и прогревом**:
+#### Конструктор с кешем и прогревом:
 
 ```go
 func NewGroupWithCache[K comparable, V any](
@@ -89,8 +89,5 @@ func NewGroupWithCache[K comparable, V any](
 #### Основной метод: `Do`
 
 ```go
-func (g *Group[K, V]) Do(
-    key K,
-    fn func() (V, error),
-) (V, error)
+func (g *Group[K, V]) Do(key K, fn func() (V, error)) (V, error)
 ```
