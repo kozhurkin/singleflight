@@ -3,9 +3,8 @@
 **singleflight** — это небольшая Go‑библиотека для дедупликации запросов и опциональный in‑memory‑кеш с TTL и поддержкой прогрева.
 
 - **Дедупликация по ключу**: конкурентные запросы с одинаковым ключом выполняют `fn` ровно один раз и разделяют результат.
-- **Опциональный кеш** с TTL и поддержкой **прогрева (warm‑up)**.
-- **Генерики для ключа и значения** (`Group[K comparable, V any]`).
-- TODO
+- **Опциональный кеш**: результаты запросов могут кешироваться в памяти на настраиваемый TTL, чтобы сократить количество вызовов `fn`.
+- **Прогрев (warm‑up)**: перед истечением TTL значение может быть заранее пересчитано в фоне, чтобы запросы всегда быстро получали готовое значение из кеша.
 
 ![singleflight+cache timeline](https://raw.githubusercontent.com/kozhurkin/singleflight/main/doc/timeline.png)
 
@@ -28,7 +27,7 @@ mux.HandleFunc("/weather", func(w http.ResponseWriter, r *http.Request) {
 })
 ```
 
-Даже при большом количестве параллельных запросов к `/weather?city=spb`:
+Даже при большом количестве параллельных запросов к `/weather?city=st.petersburg`:
 
 - внешний API вызывается один раз на всю «волну» запросов;
 - результат кешируется на время TTL;
@@ -91,20 +90,12 @@ go get github.com/kozhurkin/singleflight
 ## API
 
 
-#### Конструкторы
-
-- **Без кеша (только дедупликация)**:
+#### Конструктор без кеша (только дедупликация):
 
 ```go
 func NewGroup[K comparable, V any]() *Group[K, V]
 ```
-
-Создаёт группу, которая:
-
-- дедуплицирует **только конкурентные** вызовы;
-- каждый последующий вызов после завершения предыдущего **снова вызывает** `fn`.
-
-- **С кешем и прогревом**:
+#### Конструктор с кешем и прогревом**:
 
 ```go
 func NewGroupWithCache[K comparable, V any](
@@ -114,11 +105,6 @@ func NewGroupWithCache[K comparable, V any](
 ) *Group[K, V]
 ```
 
-- `resultTTL > 0` — включён кеш, успешные результаты живут `resultTTL`;
-- `errorTTL == 0` — ошибки не кешируются, каждый новый вызов после ошибки заново выполняет `fn`;
-- `errorTTL > 0` — ошибки живут в кеше `errorTTL` (своё TTL, независимо от `resultTTL`);
-- `warmupWindow > 0` — включён режим прогрева (warm‑up).
-
 #### Основной метод: `Do`
 
 ```go
@@ -127,162 +113,3 @@ func (g *Group[K, V]) Do(
     fn func() (V, error),
 ) (V, error)
 ```
-
-- Если по `key` уже идёт вычисление — текущая горутина ждёт его (`Wait`) и возвращает результат.
-- Если по `key` есть закешированный результат с неистёкшим `resultTTL` — он возвращается **без вызова `fn`**.
-- Если кеш пустой или протух:
-  - `fn` выполняется один раз;
-  - результат кладётся в кеш (если `resultTTL > 0`; для ошибок — если `errorTTL > 0`).
-
-Поведение в разных режимах:
-
-- **`resultTTL == 0`** — поведение как у «чистого» singleflight: только дедупликация конкурентных вызовов, без кеша.
-- **`errorTTL == 0`** — ошибки не кешируются: каждый новый вызов после ошибки снова вызывает `fn`.
-- **`warmupWindow == 0`** — кэш сбрасывается сразу по TTL, без прогрева.
-
----
-
-## Примеры использования
-
-### 1. Простая дедупликация без кеша
-
-```go
-package main
-
-import (
-    "fmt"
-    "sync"
-    "time"
-
-    "singleflight"
-)
-
-func main() {
-    g := singleflight.NewGroup[string, int]()
-
-    var wg sync.WaitGroup
-    for i := 0; i < 10; i++ {
-        wg.Add(1)
-        go func() {
-            defer wg.Done()
-            v, err := g.Do("answer", func() (int, error) {
-                // Эта функция реально будет вызвана только один раз
-                time.Sleep(50 * time.Millisecond)
-                fmt.Println("fn called")
-                return 42, nil
-            })
-            if err != nil {
-                fmt.Println("err:", err)
-                return
-            }
-            fmt.Println("value:", v)
-        }()
-    }
-
-    wg.Wait()
-}
-```
-
-Вывод покажет одну строку `fn called` и 10 строк `value: 42`.
-
----
-
-### 2. Дедупликация + кеширование результата
-
-```go
-// TTL 5 секунд, ошибки не кешируем, прогрев отключён.
-g := singleflight.NewGroupWithCache[string, string](5*time.Second, 0, 0)
-
-getUser := func(id string) (string, error) {
-    return g.Do(id, func() (string, error) {
-        // здесь может быть запрос к БД/внешнему API
-        fmt.Println("query for id =", id)
-        return "user-" + id, nil
-    })
-}
-
-// Первый вызов реально выполнит fn.
-u1, _ := getUser("42")
-
-// В течение 5 секунд следующий вызов вернёт кеш.
-time.Sleep(4*time.Second)
-u2, _ := getUser("42")
-```
-
-`"query for id = 42"` будет напечатано только один раз.
-
----
-
-### 3. Кеширование с прогревом (warm‑up)
-
-```go
-// TTL 5 секунд, ошибки не кешируем, окно прогрева 2 секунды.
-g := singleflight.NewGroupWithCache[string, int](5*time.Second, 0, 2*time.Second)
-
-// Первый вызов вычисляет и кеширует значение 1.
-v1, _ := g.Do("key", func() (int, error) {
-    fmt.Println("compute initial")
-    return 1, nil
-})
-
-// Через ~5 секунд TTL истекает, но ключ сразу не удаляется.
-time.Sleep(5*time.Second + 10*time.Millisecond)
-
-// Этот вызов ещё вернёт старое значение (1),
-// но в фоне запустит «разогрев» с новым fn.
-v2, _ := g.Do("key", func() (int, error) {
-    fmt.Println("warm compute")
-    return 2, nil
-})
-
-// Даём прогреву завершиться.
-time.Sleep(2*time.Second + 10*time.Millisecond)
-
-// Теперь значение должно быть обновлённым (2).
-v3, _ := g.Do("key", func() (int, error) {
-    fmt.Println("should not be called, warm value used")
-    return 3, nil
-})
-
-fmt.Println(v1, v2, v3) // 1 1 2
-```
-
----
-
-## Тесты
-
-Библиотека покрыта юнит‑тестами:
-
-- `singleflight_test.go` — сценарии дедупликации, кеша, кеширования ошибок, прогрева и очистки ключей.
-- `singleflight_bench_test.go` — нагрузочные тесты (benchmarks) для проверки производительности в различных сценариях.
-
-Запуск юнит‑тестов:
-
-```bash
-go test ./...
-```
-
-Запуск нагрузочных тестов:
-
-```bash
-# Все бенчмарки
-go test -bench=. -benchmem
-
-# Конкретный бенчмарк
-go test -bench=BenchmarkDo_WithCache_HitRate -benchmem
-
-# Бенчмарки с подробной информацией
-go test -bench=. -benchmem -benchtime=5s
-```
-
-Бенчмарки покрывают следующие сценарии:
-- Дедупликация при высокой конкурентности
-- Производительность доступа к кешу (cache hits)
-- Смешанная нагрузка (cache hits/misses)
-- Работа с множеством разных ключей
-- Высокая конкурентность (много горутин на один ключ)
-- Механизм прогрева (warm-up)
-- Кеширование ошибок
-- Реальные сценарии использования
-
-
