@@ -166,11 +166,7 @@ func (f *Flight[T]) Catch(handler func(error) (T, error)) *Flight[T] {
 // В отличие от Then и Catch, fn получает и res и err одновременно и сам решает,
 // как их интерпретировать.
 func (f *Flight[T]) Handle(fn func(res T, err error) (T, error)) *Flight[T] {
-	return NewFlight(func() (T, error) {
-		f.Run()
-		res, err := f.Wait()
-		return fn(res, err)
-	})
+	return HandleAny(f, fn)
 }
 
 // HandleAny создаёт новый Flight[R] из Flight[T], вызывая fn с результатом и ошибкой
