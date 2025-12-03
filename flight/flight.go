@@ -172,3 +172,14 @@ func (f *Flight[T]) Handle(fn func(res T, err error) (T, error)) *Flight[T] {
 		return fn(res, err)
 	})
 }
+
+// HandleAny создаёт новый Flight[R] из Flight[T], вызывая fn с результатом и ошибкой
+// исходного Flight и возвращая то, что вернёт fn.
+// Это свободная функция (а не метод), потому что в Go методы не могут иметь собственные параметров типа.
+func HandleAny[T, R any](f *Flight[T], fn func(res T, err error) (R, error)) *Flight[R] {
+	return NewFlight(func() (R, error) {
+		f.Run()
+		res, err := f.Wait()
+		return fn(res, err)
+	})
+}

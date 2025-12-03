@@ -427,3 +427,41 @@ func TestFlight_Handle_ErrorRecovery(t *testing.T) {
 	require.NoError(t, err, "Handle() should be able to recover from error")
 	require.Equal(t, 999, v, "Handle() should return recovered value")
 }
+
+func TestFlight_HandleAny_Success(t *testing.T) {
+	base := flight.NewFlight(func() (int, error) {
+		return 10, nil
+	})
+
+	handled := flight.HandleAny(base, func(res int, err error) (string, error) {
+		require.NoError(t, err, "base error should be nil in HandleAny on success")
+		require.Equal(t, 10, res, "HandleAny should receive original result")
+		return fmt.Sprintf("%d", res*2), nil
+	})
+
+	handled.Run()
+	v, err := handled.Wait()
+
+	require.NoError(t, err, "HandleAny() chain should not return error on success")
+	require.Equal(t, "20", v, "HandleAny() should be able to transform the result")
+}
+
+func TestFlight_HandleAny_ErrorRecovery(t *testing.T) {
+	someErr := errors.New("boom")
+
+	base := flight.NewFlight(func() (int, error) {
+		return 0, someErr
+	})
+
+	handled := flight.HandleAny(base, func(res int, err error) (string, error) {
+		require.ErrorIs(t, err, someErr, "HandleAny should receive original error")
+		require.Equal(t, 0, res, "HandleAny should receive zero result on error")
+		return "recovered", nil
+	})
+
+	handled.Run()
+	v, err := handled.Wait()
+
+	require.NoError(t, err, "HandleAny() should be able to recover from error")
+	require.Equal(t, "recovered", v, "HandleAny() should return recovered value")
+}
