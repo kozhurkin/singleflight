@@ -16,7 +16,7 @@ import (
 func TestFlight_RunOnce(t *testing.T) {
 	var calls int32
 
-	f := flight.NewFlight(func() (int, error) {
+	f := flight.NewFlightFlow(func() (int, error) {
 		atomic.AddInt32(&calls, 1)
 		time.Sleep(5 * time.Millisecond)
 		return 42, nil
@@ -44,7 +44,7 @@ func TestFlight_RunOnce(t *testing.T) {
 }
 
 func TestFlight_WaitAndHits(t *testing.T) {
-	f := flight.NewFlight(func() (int, error) {
+	f := flight.NewFlightFlow(func() (int, error) {
 		return 42, nil
 	})
 
@@ -61,7 +61,7 @@ func TestFlight_WaitAndHits(t *testing.T) {
 }
 
 func TestFlight_DoneChannel(t *testing.T) {
-	f := flight.NewFlight(func() (int, error) {
+	f := flight.NewFlightFlow(func() (int, error) {
 		time.Sleep(5 * time.Millisecond)
 		return 1, nil
 	})
@@ -94,7 +94,7 @@ func TestFlight_DoneChannel(t *testing.T) {
 }
 
 func TestFlight_Wait_ConcurrentHits(t *testing.T) {
-	f := flight.NewFlight(func() (int, error) {
+	f := flight.NewFlightFlow(func() (int, error) {
 		time.Sleep(5 * time.Millisecond)
 		return 7, nil
 	})
@@ -127,7 +127,7 @@ func TestFlight_Wait_ConcurrentHits(t *testing.T) {
 }
 
 func TestFlight_Then_Success(t *testing.T) {
-	base := flight.NewFlight(func() (int, error) {
+	base := flight.NewFlightFlow(func() (int, error) {
 		time.Sleep(10 * time.Millisecond)
 		return 2, nil
 	})
@@ -143,7 +143,7 @@ func TestFlight_Then_Success(t *testing.T) {
 }
 
 func TestFlight_ThenAny_Success(t *testing.T) {
-	base := flight.NewFlight(func() (int, error) {
+	base := flight.NewFlightFlow(func() (int, error) {
 		return 5, nil
 	})
 
@@ -159,7 +159,7 @@ func TestFlight_ThenAny_Success(t *testing.T) {
 
 func TestFlight_Then_ErrorPropagation(t *testing.T) {
 	someErr := errors.New("boom")
-	base := flight.NewFlight(func() (int, error) {
+	base := flight.NewFlightFlow(func() (int, error) {
 		return 0, someErr
 	})
 
@@ -178,7 +178,7 @@ func TestFlight_Then_ErrorPropagation(t *testing.T) {
 
 func TestFlight_ThenAny_ErrorPropagation(t *testing.T) {
 	someErr := errors.New("boom")
-	base := flight.NewFlight(func() (int, error) {
+	base := flight.NewFlightFlow(func() (int, error) {
 		return 0, someErr
 	})
 
@@ -196,7 +196,7 @@ func TestFlight_ThenAny_ErrorPropagation(t *testing.T) {
 
 func TestFlight_Catch(t *testing.T) {
 	someErr := errors.New("boom")
-	base := flight.NewFlight(func() (int, error) {
+	base := flight.NewFlightFlow(func() (int, error) {
 		return 0, someErr
 	})
 
@@ -216,7 +216,7 @@ func TestFlight_Catch(t *testing.T) {
 func TestFlight_Catch_NoErrorPassthrough(t *testing.T) {
 	const value = 7
 
-	base := flight.NewFlight(func() (int, error) {
+	base := flight.NewFlightFlow(func() (int, error) {
 		return value, nil
 	})
 
@@ -234,7 +234,7 @@ func TestFlight_Catch_NoErrorPassthrough(t *testing.T) {
 }
 
 func TestFlight_After_CalledAfterCompletion(t *testing.T) {
-	f := flight.NewFlight(func() (int, error) {
+	f := flight.NewFlightFlow(func() (int, error) {
 		time.Sleep(5 * time.Millisecond)
 		return 1, nil
 	})
@@ -257,7 +257,7 @@ func TestFlight_After_CalledAfterCompletion(t *testing.T) {
 }
 
 func TestFlight_After_AlreadyDone(t *testing.T) {
-	f := flight.NewFlight(func() (int, error) {
+	f := flight.NewFlightFlow(func() (int, error) {
 		return 2, nil
 	})
 
@@ -281,7 +281,7 @@ func TestFlight_After_AlreadyDone(t *testing.T) {
 }
 
 func TestFlight_StartedFlag(t *testing.T) {
-	f := flight.NewFlight(func() (int, error) {
+	f := flight.NewFlightFlow(func() (int, error) {
 		time.Sleep(5 * time.Millisecond)
 		return 1, nil
 	})
@@ -301,7 +301,7 @@ func TestFlight_StartedFlag(t *testing.T) {
 func TestFlight_RunAsyncOnce(t *testing.T) {
 	var calls int32
 
-	f := flight.NewFlight(func() (int, error) {
+	f := flight.NewFlightFlow(func() (int, error) {
 		atomic.AddInt32(&calls, 1)
 		time.Sleep(5 * time.Millisecond)
 		return 42, nil
@@ -332,7 +332,7 @@ func TestFlight_RunAsyncOnce(t *testing.T) {
 func TestFlight_CancelBeforeRun(t *testing.T) {
 	var calls int32
 
-	f := flight.NewFlight(func() (int, error) {
+	f := flight.NewFlightFlow(func() (int, error) {
 		atomic.AddInt32(&calls, 1)
 		return 123, nil
 	})
@@ -367,7 +367,7 @@ func TestFlight_CancelBeforeRun(t *testing.T) {
 func TestFlight_CancelAfterRun(t *testing.T) {
 	var calls int32
 
-	f := flight.NewFlight(func() (int, error) {
+	f := flight.NewFlightFlow(func() (int, error) {
 		atomic.AddInt32(&calls, 1)
 		time.Sleep(5 * time.Millisecond)
 		return 42, nil
@@ -391,7 +391,7 @@ func TestFlight_CancelAfterRun(t *testing.T) {
 }
 
 func TestFlight_Handle_Success(t *testing.T) {
-	base := flight.NewFlight(func() (int, error) {
+	base := flight.NewFlightFlow(func() (int, error) {
 		return 10, nil
 	})
 
@@ -411,7 +411,7 @@ func TestFlight_Handle_Success(t *testing.T) {
 func TestFlight_Handle_ErrorRecovery(t *testing.T) {
 	someErr := errors.New("boom")
 
-	base := flight.NewFlight(func() (int, error) {
+	base := flight.NewFlightFlow(func() (int, error) {
 		return 0, someErr
 	})
 
@@ -429,7 +429,7 @@ func TestFlight_Handle_ErrorRecovery(t *testing.T) {
 }
 
 func TestFlight_HandleAny_Success(t *testing.T) {
-	base := flight.NewFlight(func() (int, error) {
+	base := flight.NewFlightFlow(func() (int, error) {
 		return 10, nil
 	})
 
@@ -449,7 +449,7 @@ func TestFlight_HandleAny_Success(t *testing.T) {
 func TestFlight_HandleAny_ErrorRecovery(t *testing.T) {
 	someErr := errors.New("boom")
 
-	base := flight.NewFlight(func() (int, error) {
+	base := flight.NewFlightFlow(func() (int, error) {
 		return 0, someErr
 	})
 

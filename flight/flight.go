@@ -11,16 +11,13 @@ var ErrCanceled = errors.New("flight: canceled")
 
 // Flight хранит состояние одного вычисления значения типа T.
 // Позволяет дождаться результата через Wait и гарантирует единичный запуск fn.
+// Это минимальный concurrency-примитив без цепочек, метрик и дополнительных политик.
 type Flight[T any] struct {
 	done chan struct{}
 	res  T
 	err  error
 	fn   func() (T, error)
 	once sync.Once
-
-	hits     uint64
-	started  uint64
-	canceled uint64
 }
 
 // NewFlight создаёт новый Flight для выполнения функции fn.
@@ -39,35 +36,7 @@ func (f *Flight[T]) Done() <-chan struct{} {
 // Wait блокируется до завершения fn и возвращает результат и ошибку.
 func (f *Flight[T]) Wait() (T, error) {
 	<-f.done
-	atomic.AddUint64(&f.hits, 1)
 	return f.res, f.err
-}
-
-// OnDone блокируется до завершения fn (до закрытия канала done),
-// а затем синхронно выполняет переданную функцию fn, передавая
-// ему результат res и ошибку err.
-// Если нужна асинхронность, вызывающий код может использовать go f.OnDone(fn).
-func (f *Flight[T]) OnDone(fn func(res T, err error)) {
-	<-f.done
-	fn(f.res, f.err)
-}
-
-// Hits возвращает количество обращений к результату f.res через Wait.
-// Безопасно для конкурентного использования.
-func (f *Flight[T]) Hits() int64 {
-	return int64(atomic.LoadUint64(&f.hits))
-}
-
-// Started возвращает true, если выполнение fn было запущено (синхронно или асинхронно).
-// Безопасно для конкурентного использования.
-func (f *Flight[T]) Started() bool {
-	return atomic.LoadUint64(&f.started) == 1
-}
-
-// Canceled возвращает true, если Flight был отменён до запуска fn.
-// Безопасно для конкурентного использования.
-func (f *Flight[T]) Canceled() bool {
-	return atomic.LoadUint64(&f.canceled) == 1
 }
 
 // Cancel пытается отменить Flight до запуска fn.
@@ -78,7 +47,6 @@ func (f *Flight[T]) Cancel() bool {
 
 	f.once.Do(func() {
 		canceled = true
-		atomic.StoreUint64(&f.canceled, 1)
 
 		var zero T
 		f.res = zero
@@ -102,7 +70,6 @@ func (f *Flight[T]) run(async bool) bool {
 	first := false
 	f.once.Do(func() {
 		first = true
-		atomic.StoreUint64(&f.started, 1)
 		if async {
 			go f.execute()
 		} else {
@@ -124,20 +91,106 @@ func (f *Flight[T]) RunAsync() bool {
 	return f.run(true)
 }
 
-// Then создаёт новый Flight[T], который будет выполнять функцию fn после завершения текущего Flight.
-// Функция fn получает результат текущего выполнения и возвращает новое значение типа T и ошибку.
-// Если текущий Flight завершился с ошибкой, fn не вызывается, и новый Flight сразу возвращает эту ошибку.
-// Исходный Flight автоматически запускается синхронно для начала выполнения цепочки.
-func (f *Flight[T]) Then(fn func(T) (T, error)) *Flight[T] {
-	return ThenAny(f, fn)
+// FlightFlow — надстройка над Flight, добавляющая удобные методы композиции,
+// обработку ошибок, метрики и дополнительную семантику использования результата.
+// Она не меняет базовый примитив Flight, а лишь управляет его жизненным циклом.
+type FlightFlow[T any] struct {
+	base *Flight[T]
+
+	hits     uint64
+	started  uint64
+	canceled uint64
 }
 
-// ThenAny создаёт новый Flight[R] из Flight[T], выполняя fn после завершения f.
+// NewFlightFlow создаёт новый FlightFlow с внутренним Flight.
+func NewFlightFlow[T any](fn func() (T, error)) *FlightFlow[T] {
+	return &FlightFlow[T]{base: NewFlight(fn)}
+}
+
+// FromFlight оборачивает существующий Flight в FlightFlow.
+// Предполагается, что этот Flight больше не используется напрямую.
+func FromFlight[T any](f *Flight[T]) *FlightFlow[T] {
+	return &FlightFlow[T]{base: f}
+}
+
+// Done возвращает канал завершения базового Flight.
+func (ff *FlightFlow[T]) Done() <-chan struct{} {
+	return ff.base.Done()
+}
+
+// Wait блокируется до завершения вычисления и возвращает результат и ошибку.
+// Счётчик Hits увеличивается на 1 для каждого вызова Wait.
+func (ff *FlightFlow[T]) Wait() (T, error) {
+	res, err := ff.base.Wait()
+	atomic.AddUint64(&ff.hits, 1)
+	return res, err
+}
+
+// OnDone блокируется до завершения базового Flight,
+// а затем синхронно вызывает fn с результатом и ошибкой.
+func (ff *FlightFlow[T]) OnDone(fn func(res T, err error)) {
+	res, err := ff.base.Wait()
+	fn(res, err)
+}
+
+// Run выполняет базовый Flight синхронно ровно один раз.
+// Для первого вызова возвращает true, для последующих — false.
+func (ff *FlightFlow[T]) Run() bool {
+	ok := ff.base.Run()
+	if ok {
+		atomic.StoreUint64(&ff.started, 1)
+	}
+	return ok
+}
+
+// RunAsync запускает базовый Flight в отдельной горутине ровно один раз.
+// Для первого вызова возвращает true, для последующих — false.
+func (ff *FlightFlow[T]) RunAsync() bool {
+	ok := ff.base.RunAsync()
+	if ok {
+		atomic.StoreUint64(&ff.started, 1)
+	}
+	return ok
+}
+
+// Cancel пытается отменить базовый Flight до его запуска.
+// Успешная отмена помечает FlightFlow как canceled.
+func (ff *FlightFlow[T]) Cancel() bool {
+	ok := ff.base.Cancel()
+	if ok {
+		atomic.StoreUint64(&ff.canceled, 1)
+	}
+	return ok
+}
+
+// Hits возвращает количество обращений к результату через Wait.
+func (ff *FlightFlow[T]) Hits() int64 {
+	return int64(atomic.LoadUint64(&ff.hits))
+}
+
+// Started возвращает true, если Run/RunAsync в этом Flow успешно запустили базовый Flight.
+func (ff *FlightFlow[T]) Started() bool {
+	return atomic.LoadUint64(&ff.started) == 1
+}
+
+// Canceled возвращает true, если Cancel в этом Flow успешно отменил базовый Flight до запуска.
+func (ff *FlightFlow[T]) Canceled() bool {
+	return atomic.LoadUint64(&ff.canceled) == 1
+}
+
+// Then создаёт новый FlightFlow[T], который будет выполнять функцию fn
+// после завершения текущего FlightFlow.
+// Если текущий Flow завершился с ошибкой, fn не вызывается, и новый Flow возвращает эту ошибку.
+func (ff *FlightFlow[T]) Then(fn func(T) (T, error)) *FlightFlow[T] {
+	return ThenAny(ff, fn)
+}
+
+// ThenAny создаёт новый FlightFlow[R] из FlightFlow[T], выполняя fn после завершения ff.
 // Это свободная функция (а не метод), потому что в Go методы не могут иметь собственные параметров типа.
-func ThenAny[T, R any](f *Flight[T], fn func(T) (R, error)) *Flight[R] {
-	return NewFlight(func() (R, error) {
-		f.Run()
-		res, err := f.Wait()
+func ThenAny[T, R any](ff *FlightFlow[T], fn func(T) (R, error)) *FlightFlow[R] {
+	return NewFlightFlow(func() (R, error) {
+		ff.Run()
+		res, err := ff.Wait()
 		if err != nil {
 			var zero R
 			return zero, err
@@ -146,14 +199,14 @@ func ThenAny[T, R any](f *Flight[T], fn func(T) (R, error)) *Flight[R] {
 	})
 }
 
-// Catch создаёт новый Flight[T], который обрабатывает ошибку из текущего Flight.
+// Catch создаёт новый FlightFlow[T], который обрабатывает ошибку из текущего FlightFlow.
 // Если текущий Flight завершился без ошибки, результат просто прокидывается дальше.
 // Если произошла ошибка, вызывается handler, который может вернуть восстановленное значение или
 // другую ошибку.
-func (f *Flight[T]) Catch(handler func(error) (T, error)) *Flight[T] {
-	return NewFlight(func() (T, error) {
-		f.Run()
-		res, err := f.Wait()
+func (ff *FlightFlow[T]) Catch(handler func(error) (T, error)) *FlightFlow[T] {
+	return NewFlightFlow(func() (T, error) {
+		ff.Run()
+		res, err := ff.Wait()
 		if err != nil {
 			return handler(err)
 		}
@@ -161,21 +214,21 @@ func (f *Flight[T]) Catch(handler func(error) (T, error)) *Flight[T] {
 	})
 }
 
-// Handle создаёт новый Flight[T], который всегда вызывает fn с результатом и ошибкой
-// исходного Flight и возвращает то, что вернёт fn.
+// Handle создаёт новый FlightFlow[T], который всегда вызывает fn с результатом и ошибкой
+// исходного FlightFlow и возвращает то, что вернёт fn.
 // В отличие от Then и Catch, fn получает и res и err одновременно и сам решает,
 // как их интерпретировать.
-func (f *Flight[T]) Handle(fn func(res T, err error) (T, error)) *Flight[T] {
-	return HandleAny(f, fn)
+func (ff *FlightFlow[T]) Handle(fn func(res T, err error) (T, error)) *FlightFlow[T] {
+	return HandleAny(ff, fn)
 }
 
-// HandleAny создаёт новый Flight[R] из Flight[T], вызывая fn с результатом и ошибкой
-// исходного Flight и возвращая то, что вернёт fn.
+// HandleAny создаёт новый FlightFlow[R] из FlightFlow[T], вызывая fn с результатом и ошибкой
+// исходного FlightFlow и возвращая то, что вернёт fn.
 // Это свободная функция (а не метод), потому что в Go методы не могут иметь собственные параметров типа.
-func HandleAny[T, R any](f *Flight[T], fn func(res T, err error) (R, error)) *Flight[R] {
-	return NewFlight(func() (R, error) {
-		f.Run()
-		res, err := f.Wait()
+func HandleAny[T, R any](ff *FlightFlow[T], fn func(res T, err error) (R, error)) *FlightFlow[R] {
+	return NewFlightFlow(func() (R, error) {
+		ff.Run()
+		res, err := ff.Wait()
 		return fn(res, err)
 	})
 }

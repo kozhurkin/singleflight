@@ -12,8 +12,8 @@ import (
 // опционально кеширует результат на resultTTL с поддержкой прогрева (warmupWindow).
 type Group[K comparable, V any] struct {
 	mu           sync.Mutex
-	flights      map[K]*flight.Flight[V]
-	warmings     map[K]*flight.Flight[V]
+	flights      map[K]*flight.FlightFlow[V]
+	warmings     map[K]*flight.FlightFlow[V]
 	resultTTL    time.Duration
 	errorTTL     time.Duration
 	warmupWindow time.Duration
@@ -22,7 +22,7 @@ type Group[K comparable, V any] struct {
 // NewGroup создаёт новый экземпляр Group без кеширования (только дедупликация).
 func NewGroup[K comparable, V any]() *Group[K, V] {
 	return &Group[K, V]{
-		flights: make(map[K]*flight.Flight[V]),
+		flights: make(map[K]*flight.FlightFlow[V]),
 	}
 }
 
@@ -32,8 +32,8 @@ func NewGroup[K comparable, V any]() *Group[K, V] {
 // warmupWindow задаёт время ожидания прогрева перед удалением ключа из кеша.
 func NewGroupWithCache[K comparable, V any](resultTTL time.Duration, errorTTL time.Duration, warmupWindow time.Duration) *Group[K, V] {
 	return &Group[K, V]{
-		flights:      make(map[K]*flight.Flight[V]),
-		warmings:     make(map[K]*flight.Flight[V]),
+		flights:      make(map[K]*flight.FlightFlow[V]),
+		warmings:     make(map[K]*flight.FlightFlow[V]),
 		resultTTL:    resultTTL,
 		errorTTL:     errorTTL,
 		warmupWindow: warmupWindow,
@@ -49,7 +49,7 @@ func NewGroupWithCache[K comparable, V any](resultTTL time.Duration, errorTTL ti
 func (g *Group[K, V]) getOrCreateFlight(
 	key K,
 	fn func() (V, error),
-) (f *flight.Flight[V], created bool, wf *flight.Flight[V]) {
+) (f *flight.FlightFlow[V], created bool, wf *flight.FlightFlow[V]) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
@@ -60,7 +60,7 @@ func (g *Group[K, V]) getOrCreateFlight(
 		// помечен pending-прогрев, но ещё не создан разогревочный Flight.
 		if g.warmupWindow > 0 {
 			if wf, ok := g.warmings[key]; ok && wf == nil {
-				wf = flight.NewFlight(fn)
+				wf = flight.NewFlightFlow(fn)
 				g.warmings[key] = wf
 				return f, false, wf
 			}
@@ -70,7 +70,7 @@ func (g *Group[K, V]) getOrCreateFlight(
 	}
 
 	// Мы — первый для этого key: создаём Flight и сохраняем
-	f = flight.NewFlight(fn)
+	f = flight.NewFlightFlow(fn)
 	g.flights[key] = f
 	return f, true, nil
 }
@@ -191,7 +191,7 @@ func (g *Group[K, V]) clearWarmupPending(key K) {
 
 // promoteWarmingFlight под блокировкой делает разогревочный wf основным Flight
 // для key (перемещает wf из warmings в flights).
-func (g *Group[K, V]) promoteWarmingFlight(key K, wf *flight.Flight[V]) *flight.Flight[V] {
+func (g *Group[K, V]) promoteWarmingFlight(key K, wf *flight.FlightFlow[V]) *flight.FlightFlow[V] {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
