@@ -3,6 +3,7 @@ package flight
 import (
 	"errors"
 	"sync"
+	"sync/atomic"
 )
 
 // ErrCanceled возвращается, если Flight был отменён до запуска fn.
@@ -17,6 +18,9 @@ type Flight[T any] struct {
 	err  error
 	fn   func() (T, error)
 	once sync.Once
+
+	started  uint64
+	canceled uint64
 }
 
 // NewFlight создаёт новый Flight для выполнения функции fn.
@@ -46,6 +50,7 @@ func (f *Flight[T]) Cancel() bool {
 
 	f.once.Do(func() {
 		canceled = true
+		atomic.StoreUint64(&f.canceled, 1)
 
 		var zero T
 		f.res = zero
@@ -69,6 +74,7 @@ func (f *Flight[T]) run(async bool) bool {
 	first := false
 	f.once.Do(func() {
 		first = true
+		atomic.StoreUint64(&f.started, 1)
 		if async {
 			go f.execute()
 		} else {
@@ -88,4 +94,16 @@ func (f *Flight[T]) Run() bool {
 // Для первого вызова возвращает true, для последующих — false.
 func (f *Flight[T]) RunAsync() bool {
 	return f.run(true)
+}
+
+// Started возвращает true, если выполнение fn было запущено (синхронно или асинхронно).
+// Безопасно для конкурентного использования.
+func (f *Flight[T]) Started() bool {
+	return atomic.LoadUint64(&f.started) == 1
+}
+
+// Canceled возвращает true, если Flight был отменён до запуска fn.
+// Безопасно для конкурентного использования.
+func (f *Flight[T]) Canceled() bool {
+	return atomic.LoadUint64(&f.canceled) == 1
 }

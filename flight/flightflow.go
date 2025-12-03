@@ -8,9 +8,7 @@ import "sync/atomic"
 type FlightFlow[T any] struct {
 	base *Flight[T]
 
-	hits     uint64
-	started  uint64
-	canceled uint64
+	hits uint64
 }
 
 // NewFlightFlow создаёт новый FlightFlow с внутренним Flight.
@@ -47,46 +45,33 @@ func (ff *FlightFlow[T]) OnDone(fn func(res T, err error)) {
 // Run выполняет базовый Flight синхронно ровно один раз.
 // Для первого вызова возвращает true, для последующих — false.
 func (ff *FlightFlow[T]) Run() bool {
-	ok := ff.base.Run()
-	if ok {
-		atomic.StoreUint64(&ff.started, 1)
-	}
-	return ok
+	return ff.base.Run()
 }
 
 // RunAsync запускает базовый Flight в отдельной горутине ровно один раз.
 // Для первого вызова возвращает true, для последующих — false.
 func (ff *FlightFlow[T]) RunAsync() bool {
-	ok := ff.base.RunAsync()
-	if ok {
-		atomic.StoreUint64(&ff.started, 1)
-	}
-	return ok
+	return ff.base.RunAsync()
 }
 
 // Cancel пытается отменить базовый Flight до его запуска.
-// Успешная отмена помечает FlightFlow как canceled.
 func (ff *FlightFlow[T]) Cancel() bool {
-	ok := ff.base.Cancel()
-	if ok {
-		atomic.StoreUint64(&ff.canceled, 1)
-	}
-	return ok
+	return ff.base.Cancel()
+}
+
+// Started возвращает true, если базовый Flight был запущен.
+func (ff *FlightFlow[T]) Started() bool {
+	return ff.base.Started()
+}
+
+// Canceled возвращает true, если базовый Flight был отменён до запуска.
+func (ff *FlightFlow[T]) Canceled() bool {
+	return ff.base.Canceled()
 }
 
 // Hits возвращает количество обращений к результату через Wait.
 func (ff *FlightFlow[T]) Hits() int64 {
 	return int64(atomic.LoadUint64(&ff.hits))
-}
-
-// Started возвращает true, если Run/RunAsync в этом Flow успешно запустили базовый Flight.
-func (ff *FlightFlow[T]) Started() bool {
-	return atomic.LoadUint64(&ff.started) == 1
-}
-
-// Canceled возвращает true, если Cancel в этом Flow успешно отменил базовый Flight до запуска.
-func (ff *FlightFlow[T]) Canceled() bool {
-	return atomic.LoadUint64(&ff.canceled) == 1
 }
 
 // Then создаёт новый FlightFlow[T], который будет выполнять функцию fn
@@ -143,5 +128,3 @@ func HandleAny[T, R any](ff *FlightFlow[T], fn func(res T, err error) (R, error)
 		return fn(res, err)
 	})
 }
-
-
