@@ -2,6 +2,7 @@ package singleflight
 
 import (
 	"errors"
+	"math/rand"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -423,4 +424,71 @@ func TestGroup_Warming_CallsCount(t *testing.T) {
 
 	t.Logf("calls=%d, hits=%d, resultTTL=%v, warmupWindow=%v, duration=%v",
 		calls, hits, resultTTL, warmupWindow, duration)
+}
+
+// TestGroup_CacheAge_NotMoreThanTTLPlusWarmup под нагрузкой проверяет инвариант:
+// после каждого завершения Do() значение не старше resultTTL + warmupWindow
+// (с небольшим запасом на планировщик/таймеры).
+func TestGroup_CacheAge_NotMoreThanTTLPlusWarmup(t *testing.T) {
+	const (
+		resultTTL    = 30 * time.Millisecond
+		warmupWindow = 10 * time.Millisecond
+		testDuration = 500 * time.Millisecond
+		workers      = 16
+		jitter       = 5 * time.Millisecond // только на планировщик/таймеры
+	)
+
+	g := NewGroupWithCache[string, time.Time](resultTTL, 0, warmupWindow)
+
+	fn := func() (time.Time, error) {
+		// имитируем работу 1–5ms
+		d := time.Duration(1+rand.Intn(5)) * time.Millisecond
+		time.Sleep(d)
+		return time.Now(), nil
+	}
+
+	deadline := time.Now().Add(testDuration)
+
+	var (
+		wg          sync.WaitGroup
+		maxAgeNanos int64
+		violation   int32
+	)
+
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for time.Now().Before(deadline) {
+				ts, _ := g.Do("key", fn)
+
+				age := time.Since(ts)
+				limit := resultTTL + warmupWindow + jitter
+				if age > limit {
+					atomic.StoreInt32(&violation, 1)
+				}
+
+				// заодно собираем максимум для логов
+				for {
+					cur := atomic.LoadInt64(&maxAgeNanos)
+					if age.Nanoseconds() <= cur {
+						break
+					}
+					if atomic.CompareAndSwapInt64(&maxAgeNanos, cur, age.Nanoseconds()) {
+						break
+					}
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	maxAge := time.Duration(atomic.LoadInt64(&maxAgeNanos))
+	limit := resultTTL + warmupWindow + jitter
+	t.Logf("maxAge=%v, limit=%v", maxAge, limit)
+
+	if atomic.LoadInt32(&violation) != 0 {
+		t.Fatalf("cache age invariant violated under load: maxAge=%v, limit=%v", maxAge, limit)
+	}
 }
