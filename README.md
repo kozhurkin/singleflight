@@ -10,6 +10,11 @@
 
 ![singleflight+cache timeline](https://raw.githubusercontent.com/kozhurkin/singleflight/main/doc/timeline.png)
 
+### Для распределённых систем
+
+Если нужно дедуплицировать и кешировать запросы **между процессами/инстансами** (распределённый singleflight),
+в репозитории есть пакет `redisflight`, который реализует тот же паттерн поверх Redis. Подробнее см. `redis/README.md`.
+
 ## Пример использования в HTTP‑сервисе
 
 В `cmd/example/main.go` показан реальный сценарий: сервис погоды, который ходит к внешнему API и кеширует результат по городу:
