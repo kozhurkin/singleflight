@@ -13,7 +13,7 @@
 ### Для распределённых систем
 
 Если нужно дедуплицировать и кешировать запросы **между процессами/инстансами** (распределённый singleflight),
-в репозитории есть пакет `[github.com/kozhurkin/singleflight/redis](https://github.com/kozhurkin/singleflight/tree/main/redis)`, который реализует тот же паттерн поверх Redis.
+в репозитории есть пакет [`github.com/kozhurkin/singleflight/redis`](https://github.com/kozhurkin/singleflight/tree/main/redis), который реализует тот же паттерн поверх Redis.
 
 ## Пример использования в HTTP‑сервисе
 
