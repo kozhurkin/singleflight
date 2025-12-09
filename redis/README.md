@@ -7,7 +7,9 @@
   - распределённых блокировок (`TryLock`, `Unlock`, `UnlockAndSetResult`),
   - опционального атомарного чтения значения вместе с TTL (`GetResultWithTTL`).
 - **Генерик‑группа `Group`**: реализует дедупликацию и кеширование результатов так же, как in‑memory `singleflight.Group`, но поверх любого `Backend`.
-- **Адаптер под go-redis/v9**: `GoRedisV9Backend` — готовая реализация `Backend` для `github.com/redis/go-redis/v9`.
+- **Адаптеры под go-redis**: в пакете есть готовые реализации `Backend` для клиентов:
+  - `github.com/redis/go-redis/v9` (`NewGoRedisV9Backend`),
+  - `github.com/go-redis/redis/v8` (`NewGoRedisV8Backend`).
 
 ### Пример: распределённый singleflight поверх Redis
 
@@ -16,11 +18,11 @@ import (
     "time"
 
     goredis "github.com/redis/go-redis/v9"
-    "github.com/kozhurkin/singleflight/redis"
+    redisflight "github.com/kozhurkin/singleflight/redis"
 )
 
 func example() {
-    // обычный клиент go-redis
+    // обычный клиент go-redis v9
     rdb := goredis.NewClient(&goredis.Options{
         Addr: "127.0.0.1:6379",
     })
@@ -29,10 +31,10 @@ func example() {
     backend := redisflight.NewGoRedisV9Backend(rdb)
 
     // распределённая группа: lockTTL, resultTTL, pollInterval
-    g := redisflight.NewGroup[string, int](
+    g := redisflight.NewGroup[int](
         backend,
-        2*time.Second,      // lockTTL
-        5*time.Second,      // resultTTL
+        2*time.Second,       // lockTTL
+        5*time.Second,       // resultTTL
         50*time.Millisecond, // pollInterval для ожидания результата
     )
 

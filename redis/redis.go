@@ -9,7 +9,9 @@ import (
 	"github.com/google/uuid"
 )
 
-type Group[K comparable, V any] struct {
+// Group реализует распределённый singleflight поверх абстрактного Backend.
+// Ключи всегда string.
+type Group[V any] struct {
 	backend      Backend
 	lockTTL      time.Duration // TTL блокировки
 	resultTTL    time.Duration // TTL хранения результата
@@ -17,8 +19,8 @@ type Group[K comparable, V any] struct {
 }
 
 // NewGroup создаёт Group поверх указанного Backend.
-func NewGroup[K comparable, V any](backend Backend, lockTTL, resultTTL, pollInterval time.Duration) *Group[K, V] {
-	return &Group[K, V]{
+func NewGroup[V any](backend Backend, lockTTL, resultTTL, pollInterval time.Duration) *Group[V] {
+	return &Group[V]{
 		backend:      backend,
 		lockTTL:      lockTTL,
 		resultTTL:    resultTTL,
@@ -26,17 +28,18 @@ func NewGroup[K comparable, V any](backend Backend, lockTTL, resultTTL, pollInte
 	}
 }
 
-func (g *Group[K, V]) Do(key K, fn func() (V, error)) (V, error) {
-	return g.do(key, fn)
+// Do выполняет вычисление для key с использованием контекста Background.
+// Для тонкого контроля отмены/дедлайнов используйте DoCtx.
+func (g *Group[V]) Do(key string, fn func() (V, error)) (V, error) {
+	return g.DoCtx(context.Background(), key, fn)
 }
 
-func (g *Group[K, V]) do(key K, fn func() (V, error)) (V, error) {
+// DoCtx выполняет вычисление для key с использованием переданного контекста.
+func (g *Group[V]) DoCtx(ctx context.Context, key string, fn func() (V, error)) (V, error) {
 	var zero V
-	ctx := context.Background()
 
-	keyStr := any(key).(string)
-	lockKey := "lock:" + keyStr
-	resultKey := "result:" + keyStr
+	lockKey := "lock:" + key
+	resultKey := "result:" + key
 
 	// Сначала пробуем получить результат из кеша
 	if res, found, err := g.getResult(ctx, resultKey); err != nil {
@@ -75,6 +78,8 @@ func (g *Group[K, V]) do(key K, fn func() (V, error)) (V, error) {
 
 	for {
 		select {
+		case <-ctx.Done():
+			return zero, ctx.Err()
 		case <-ticker.C:
 			if res, found, err := g.getResult(ctx, resultKey); err != nil {
 				return zero, err
@@ -93,7 +98,7 @@ func (g *Group[K, V]) do(key K, fn func() (V, error)) (V, error) {
 //   - V: значение результата (валидно, только если found == true и err == nil),
 //   - bool: признак, найден ли результат в кеше,
 //   - error: ошибка при обращении к Redis или при unmarshal.
-func (g *Group[K, V]) getResult(ctx context.Context, resultKey string) (V, bool, error) {
+func (g *Group[V]) getResult(ctx context.Context, resultKey string) (V, bool, error) {
 	var zero V
 
 	data, found, err := g.backend.GetResult(ctx, resultKey)
@@ -112,7 +117,7 @@ func (g *Group[K, V]) getResult(ctx context.Context, resultKey string) (V, bool,
 // Возвращает:
 //   - bool: признак, были ли реально сняты лок и записан результат,
 //   - error: ошибка при обращении к Redis или выполнении Lua-скрипта.
-func (g *Group[K, V]) unlockAndSetResult(ctx context.Context, lockKey, resultKey, lockValue string, res V) (bool, error) {
+func (g *Group[V]) unlockAndSetResult(ctx context.Context, lockKey, resultKey, lockValue string, res V) (bool, error) {
 	data, err := json.Marshal(res)
 	if err != nil {
 		return false, err
@@ -133,13 +138,13 @@ func (g *Group[K, V]) unlockAndSetResult(ctx context.Context, lockKey, resultKey
 // Возвращает:
 //   - bool: признак, была ли реально снята блокировка,
 //   - error: ошибка при обращении к Redis.
-func (g *Group[K, V]) unlock(ctx context.Context, lockKey, lockValue string) (bool, error) {
+func (g *Group[V]) unlock(ctx context.Context, lockKey, lockValue string) (bool, error) {
 	return g.backend.Unlock(ctx, lockKey, lockValue)
 }
 
 // setResult сериализует результат и сохраняет его в Backend с TTL результата.
 // Этот метод не взаимодействует с блокировкой.
-func (g *Group[K, V]) setResult(ctx context.Context, resultKey string, res V) error {
+func (g *Group[V]) setResult(ctx context.Context, resultKey string, res V) error {
 	data, err := json.Marshal(res)
 	if err != nil {
 		return err
@@ -153,7 +158,7 @@ func (g *Group[K, V]) setResult(ctx context.Context, resultKey string, res V) er
 //   - string: значение блокировки (UUID), валидно только если ok == true и err == nil,
 //   - bool: признак, удалось ли захватить блокировку,
 //   - error: ошибка при обращении к Redis.
-func (g *Group[K, V]) lock(ctx context.Context, lockKey string) (string, bool, error) {
+func (g *Group[V]) lock(ctx context.Context, lockKey string) (string, bool, error) {
 	lockValue := uuid.NewString()
 
 	ok, err := g.backend.TryLock(ctx, lockKey, lockValue, g.lockTTL)

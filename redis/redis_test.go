@@ -20,23 +20,6 @@ func redisAddr() string {
 	return "127.0.0.1:6379"
 }
 
-// newTestRedisClient создаёт клиента Redis и скипает тест, если Redis недоступен.
-func newTestRedisClient(t *testing.T) *goredis.Client {
-	t.Helper()
-
-	client := goredis.NewClient(&goredis.Options{
-		Addr: redisAddr(),
-	})
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	if err := client.Ping(ctx).Err(); err != nil {
-		t.Skipf("redis is not available at %s: %v", redisAddr(), err)
-	}
-
-	return client
-}
 
 // TestGroup_MultiProcess_UsesSingleComputation запускает несколько процессов,
 // использующих один и тот же Redis и ключ, и проверяет, что реальное вычисление fn
@@ -44,7 +27,7 @@ func newTestRedisClient(t *testing.T) *goredis.Client {
 func TestGroup_MultiProcess_UsesSingleComputation(t *testing.T) {
 	const workers = 8
 
-	client := newTestRedisClient(t)
+	client := newTestRedisClientV9(t)
 	ctx := context.Background()
 
 	// Уникальный префикс для ключей этого теста
@@ -140,7 +123,7 @@ func TestGroup_MultiProcess_Helper(t *testing.T) {
 
 	// Создаём Group с достаточно большим resultTTL, чтобы все воркеры
 	// успели попасть в кешированный результат.
-	g := NewGroup[string, int](backend,
+	g := NewGroup[int](backend,
 		2*time.Second,      // lockTTL
 		5*time.Second,      // resultTTL
 		50*time.Millisecond, // pollInterval
