@@ -6,7 +6,7 @@ on:
   pull_request:
 
 jobs:
-  test:
+  unit-and-bench:
     runs-on: ubuntu-latest
 
     steps:
@@ -43,7 +43,7 @@ jobs:
           name: benchmark-results
           path: benchmark.txt
 
-  redis-tests:
+  redis-integration:
     runs-on: ubuntu-latest
 
     services:
