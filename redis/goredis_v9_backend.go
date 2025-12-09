@@ -8,23 +8,23 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 )
 
-// Lua-скрипты для Redis, переиспользуемые через NewScript.
-var (
-	luaGetWithTTLScript = goredis.NewScript(`
+// Тексты Lua-скриптов.
+const (
+	luaGetWithTTLSource = `
 local v   = redis.call("GET", KEYS[1])
 local ttl = redis.call("PTTL", KEYS[1])
 return {v, ttl}
-`)
+`
 
-	luaUnlockScript = goredis.NewScript(`
+	luaUnlockSource = `
 if redis.call("get", KEYS[1]) == ARGV[1] then
 	return redis.call("del", KEYS[1])
 else
 	return 0
 end
-`)
+`
 
-	luaUnlockAndSetResultScript = goredis.NewScript(`
+	luaUnlockAndSetResultSource = `
 if redis.call("get", KEYS[1]) == ARGV[1] then
 	redis.call("del", KEYS[1])
 	redis.call("set", KEYS[2], ARGV[2], "PX", ARGV[3])
@@ -32,24 +32,39 @@ if redis.call("get", KEYS[1]) == ARGV[1] then
 else
 	return 0
 end
-`)
+`
 )
+
+// goRedisScripts инкапсулирует Lua-скрипты, используемые Backend'ом.
+type goRedisScripts struct {
+	getWithTTL         *goredis.Script
+	unlock             *goredis.Script
+	unlockAndSetResult *goredis.Script
+}
 
 // GoRedisV9Backend — реализация Backend поверх github.com/redis/go-redis/v9.
 type GoRedisV9Backend struct {
-	client *goredis.Client
+	client  *goredis.Client
+	scripts goRedisScripts
 }
 
 // NewGoRedisV9Backend оборачивает *redis.Client в Backend.
 func NewGoRedisV9Backend(client *goredis.Client) *GoRedisV9Backend {
-	return &GoRedisV9Backend{client: client}
+	return &GoRedisV9Backend{
+		client: client,
+		scripts: goRedisScripts{
+			getWithTTL:         goredis.NewScript(luaGetWithTTLSource),
+			unlock:             goredis.NewScript(luaUnlockSource),
+			unlockAndSetResult: goredis.NewScript(luaUnlockAndSetResultSource),
+		},
+	}
 }
 
 // GetResultWithTTL атомарно получает значение и оставшийся TTL ключа через Lua-скрипт.
 // Если ключ не найден, возвращает found=false, ttl=0, err=nil.
 // Если ключ существует, но TTL не установлен (permanent key), возвращает found=true, ttl=0.
 func (b *GoRedisV9Backend) GetResultWithTTL(ctx context.Context, resultKey string) ([]byte, bool, time.Duration, error) {
-	raw, err := luaGetWithTTLScript.Run(ctx, b.client, []string{resultKey}).Result()
+	raw, err := b.scripts.getWithTTL.Run(ctx, b.client, []string{resultKey}).Result()
 	if err != nil {
 		return nil, false, 0, err
 	}
@@ -109,7 +124,7 @@ func (b *GoRedisV9Backend) TryLock(ctx context.Context, lockKey, lockValue strin
 }
 
 func (b *GoRedisV9Backend) Unlock(ctx context.Context, lockKey, lockValue string) (bool, error) {
-	n, err := luaUnlockScript.Run(ctx, b.client, []string{lockKey}, lockValue).Int64()
+	n, err := b.scripts.unlock.Run(ctx, b.client, []string{lockKey}, lockValue).Int64()
 	if err != nil {
 		return false, err
 	}
@@ -122,7 +137,7 @@ func (b *GoRedisV9Backend) UnlockAndSetResult(
 	data []byte,
 	ttl time.Duration,
 ) (bool, error) {
-	n, err := luaUnlockAndSetResultScript.Run(
+	n, err := b.scripts.unlockAndSetResult.Run(
 		ctx,
 		b.client,
 		[]string{lockKey, resultKey},
@@ -135,5 +150,3 @@ func (b *GoRedisV9Backend) UnlockAndSetResult(
 	}
 	return n > 0, nil
 }
-
-

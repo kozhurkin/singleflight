@@ -3,6 +3,7 @@ module github.com/kozhurkin/singleflight
 go 1.20
 
 require (
+	github.com/go-redis/redis/v8 v8.11.5
 	github.com/google/uuid v1.6.0
 	github.com/redis/go-redis/v9 v9.17.2
 	github.com/stretchr/testify v1.9.0
