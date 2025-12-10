@@ -12,7 +12,7 @@
 
 <img src="https://raw.githubusercontent.com/kozhurkin/singleflight/main/doc/distributed-timeline.png" width="780" />
 
-### Пример: распределённый singleflight поверх Redis
+### Пример
 
 ```go
 import (
@@ -53,8 +53,9 @@ func example() {
 }
 ```
 
-**Адаптеры**: в пакете есть готовые реализации `Backend` для клиентов:
+### Пример
+В пакете есть готовые реализации `Backend` для клиентов:
   - `github.com/redis/go-redis/v9` (`NewGoRedisV9Backend`),
-  - `github.com/go-redis/redis/v8` (`NewGoRedisV8Backend`).
+  - `github.com/go-redis/redis/v8` (`NewGoRedisV8Backend`),
   - `github.com/valkey-io/valkey-glide/go/v2` (`NewValkeyGlideBackend`).
 
