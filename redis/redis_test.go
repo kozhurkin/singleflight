@@ -124,9 +124,10 @@ func TestGroup_MultiProcess_Helper(t *testing.T) {
 	// Создаём Group с достаточно большим resultTTL, чтобы все воркеры
 	// успели попасть в кешированный результат.
 	g := NewGroup[int](backend,
-		2*time.Second,      // lockTTL
-		5*time.Second,      // resultTTL
+		2*time.Second,       // lockTTL
+		5*time.Second,       // resultTTL
 		50*time.Millisecond, // pollInterval
+		0,                   // warmupWindow
 	)
 
 	fn := func() (int, error) {

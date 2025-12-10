@@ -16,15 +16,17 @@ type Group[V any] struct {
 	lockTTL      time.Duration // TTL блокировки
 	resultTTL    time.Duration // TTL хранения результата
 	pollInterval time.Duration // интервал опроса результата
+	warmupWindow time.Duration // окно прогрева результата (пока не используется)
 }
 
 // NewGroup создаёт Group поверх указанного Backend.
-func NewGroup[V any](backend Backend, lockTTL, resultTTL, pollInterval time.Duration) *Group[V] {
+func NewGroup[V any](backend Backend, lockTTL, resultTTL, pollInterval, warmupWindow time.Duration) *Group[V] {
 	return &Group[V]{
 		backend:      backend,
 		lockTTL:      lockTTL,
 		resultTTL:    resultTTL,
 		pollInterval: pollInterval,
+		warmupWindow: warmupWindow,
 	}
 }
 
@@ -41,32 +43,23 @@ func (g *Group[V]) DoCtx(ctx context.Context, key string, fn func() (V, error)) 
 	lockKey := "lock:" + key
 	resultKey := "result:" + key
 
-	// Сначала пробуем получить результат из кеша
-	if res, found, err := g.getResult(ctx, resultKey); err != nil {
+	// Сначала пробуем получить результат из кеша вместе с TTL
+	if res, found, ttl, err := g.getResultWithTTL(ctx, resultKey); err != nil {
 		return zero, err
 	} else if found {
+		// Если прогрев включен и TTL меньше окна прогрева, запускаем асинхронный прогрев.
+		if g.warmupWindow > 0 && ttl < g.warmupWindow {
+			// Запускаем асинхронный прогрев значения.
+			go g.computeAndStore(ctx, lockKey, resultKey, fn)
+			return res, nil
+		}
 		return res, nil
 	}
 
-	// Результат в кеше отсутствует — пробуем захватить блокировку
-	myUUID, ok, err := g.lock(ctx, lockKey)
-	if err != nil {
+	// Результат в кеше отсутствует — пробуем вычислить его под блокировкой.
+	if res, ok, err := g.computeAndStore(ctx, lockKey, resultKey, fn); err != nil {
 		return zero, err
-	}
-
-	if ok {
-		// Захватили блокировку — выполняем fn()
-		res, err := fn()
-		if err != nil {
-			// Не снимаем блокировку через Lua — она просто истечёт по TTL
-			return zero, err
-		}
-
-		// Сериализуем результат, снимаем блокировку и сохраняем результат
-		if _, err := g.unlockAndSetResult(ctx, lockKey, resultKey, myUUID, res); err != nil {
-			return zero, err
-		}
-
+	} else if ok {
 		return res, nil
 	}
 
@@ -97,19 +90,79 @@ func (g *Group[V]) DoCtx(ctx context.Context, key string, fn func() (V, error)) 
 // Возвращает:
 //   - V: значение результата (валидно, только если found == true и err == nil),
 //   - bool: признак, найден ли результат в кеше,
-//   - error: ошибка при обращении к Redis или при unmarshal.
+//   - error: ошибка при обращении к Backend или при unmarshal.
 func (g *Group[V]) getResult(ctx context.Context, resultKey string) (V, bool, error) {
 	var zero V
 
 	data, found, err := g.backend.GetResult(ctx, resultKey)
-	if err != nil || !found {
-		return zero, found, err
+	if err != nil {
+		return zero, false, &BackendError{Op: "GetResult", Err: err}
+	}
+	if !found {
+		return zero, false, nil
 	}
 
 	var res V
 	if err := json.Unmarshal(data, &res); err != nil {
 		return zero, false, err
 	}
+	return res, true, nil
+}
+
+// getResultWithTTL пытается получить и распарсить результат из Backend вместе с оставшимся TTL.
+// Возвращает:
+//   - V: значение результата (валидно, только если found == true и err == nil),
+//   - bool: признак, найден ли результат в кеше,
+//   - time.Duration: оставшийся TTL результата (0, если TTL не установлен или ключ не найден),
+//   - error: ошибка при обращении к Backend или при unmarshal.
+func (g *Group[V]) getResultWithTTL(ctx context.Context, resultKey string) (V, bool, time.Duration, error) {
+	var zero V
+
+	data, found, ttl, err := g.backend.GetResultWithTTL(ctx, resultKey)
+	if err != nil {
+		return zero, false, 0, &BackendError{Op: "GetResultWithTTL", Err: err}
+	}
+	if !found {
+		return zero, false, 0, nil
+	}
+
+	var res V
+	if err := json.Unmarshal(data, &res); err != nil {
+		return zero, false, 0, err
+	}
+	return res, true, ttl, nil
+}
+
+// computeAndStore захватывает блокировку для lockKey, вычисляет fn и,
+// если всё прошло успешно, сериализует и сохраняет результат в resultKey.
+// Возвращает:
+//   - V: вычисленное значение (валидно только при ok == true и err == nil),
+//   - bool: признак, удалось ли захватить блокировку,
+//   - error: ошибка при работе с Backend или в fn.
+func (g *Group[V]) computeAndStore(
+	ctx context.Context,
+	lockKey, resultKey string,
+	fn func() (V, error),
+) (V, bool, error) {
+	var zero V
+
+	myUUID, ok, err := g.lock(ctx, lockKey)
+	if err != nil || !ok {
+		return zero, ok, err
+	}
+
+	// Захватили блокировку — выполняем fn()
+	res, err := fn()
+	if err != nil {
+		// Не снимаем блокировку через Lua — она просто истечёт по TTL.
+		return zero, true, err
+	}
+
+	// Сериализуем результат, снимаем блокировку и сохраняем результат.
+	if _, err := g.unlockAndSetResult(ctx, lockKey, resultKey, myUUID, res); err != nil {
+		return zero, true, err
+	}
+
 	return res, true, nil
 }
 
@@ -123,7 +176,7 @@ func (g *Group[V]) unlockAndSetResult(ctx context.Context, lockKey, resultKey, l
 		return false, err
 	}
 
-	return g.backend.UnlockAndSetResult(
+	ok, err := g.backend.UnlockAndSetResult(
 		ctx,
 		lockKey,
 		resultKey,
@@ -131,6 +184,11 @@ func (g *Group[V]) unlockAndSetResult(ctx context.Context, lockKey, resultKey, l
 		data,
 		g.resultTTL,
 	)
+	if err != nil {
+		return false, &BackendError{Op: "UnlockAndSetResult", Err: err}
+	}
+
+	return ok, nil
 }
 
 // unlock пытается снять блокировку, только если она всё ещё принадлежит указанному значению lockValue.
@@ -139,7 +197,11 @@ func (g *Group[V]) unlockAndSetResult(ctx context.Context, lockKey, resultKey, l
 //   - bool: признак, была ли реально снята блокировка,
 //   - error: ошибка при обращении к Redis.
 func (g *Group[V]) unlock(ctx context.Context, lockKey, lockValue string) (bool, error) {
-	return g.backend.Unlock(ctx, lockKey, lockValue)
+	ok, err := g.backend.Unlock(ctx, lockKey, lockValue)
+	if err != nil {
+		return false, &BackendError{Op: "Unlock", Err: err}
+	}
+	return ok, nil
 }
 
 // setResult сериализует результат и сохраняет его в Backend с TTL результата.
@@ -150,7 +212,10 @@ func (g *Group[V]) setResult(ctx context.Context, resultKey string, res V) error
 		return err
 	}
 
-	return g.backend.SetResult(ctx, resultKey, data, g.resultTTL)
+	if err := g.backend.SetResult(ctx, resultKey, data, g.resultTTL); err != nil {
+		return &BackendError{Op: "SetResult", Err: err}
+	}
+	return nil
 }
 
 // lock генерирует значение блокировки и пытается установить её через Backend.
@@ -163,7 +228,7 @@ func (g *Group[V]) lock(ctx context.Context, lockKey string) (string, bool, erro
 
 	ok, err := g.backend.TryLock(ctx, lockKey, lockValue, g.lockTTL)
 	if err != nil {
-		return "", false, err
+		return "", false, &BackendError{Op: "TryLock", Err: err}
 	}
 
 	if !ok {
