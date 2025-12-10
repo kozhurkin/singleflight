@@ -1,14 +1,16 @@
 ## redisflight (distributed singleflight)
 
-`redisflight` — это пакет для использования `singleflight`‑подобной дедупликации **между процессами** поверх Redis.
+`redisflight` — это пакет для дедупликации и кеширования запросов **между процессами** поверх Redis.
 
-Используйте `redisflight.Group`, если:
+Используйте, если:
 
 - у вас несколько инстансов сервиса (k8s, ECS, bare-metal) и
 - вы хотите, чтобы **дорогой запрос выполнялся ровно один раз на кластер** по данному ключу,
   а все остальные конкурирующие запросы ждали и переиспользовали результат.
 
-<img src="https://raw.githubusercontent.com/kozhurkin/singleflight/main/doc/distributed-timeline.png" width="400" />
+### Схема работы для нескольких процессов
+
+<img src="https://raw.githubusercontent.com/kozhurkin/singleflight/main/doc/distributed-timeline.png" width="640" />
 
 ### Пример: распределённый singleflight поверх Redis
 
