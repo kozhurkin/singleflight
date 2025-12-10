@@ -31,7 +31,7 @@ jobs:
       - name: Upload coverage artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-report
+          name: unit-and-bench-coverage-report
           path: |
             coverage.out
             coverage.txt
@@ -40,7 +40,7 @@ jobs:
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
         with:
-          name: benchmark-results
+          name: unit-and-bench-benchmark-results
           path: benchmark.txt
 
   redis-integration:
@@ -69,7 +69,18 @@ jobs:
         with:
           go-version: '1.21.x'
 
-      - name: Run Redis-dependent tests
-        run: go test ./redis -v -covermode=atomic -coverprofile=coverage.out
+      - name: Run Redis-dependent tests with coverage
+        run: |
+          go test ./redis -v -covermode=atomic -coverprofile=coverage.out
+          go tool cover -func=coverage.out | tee coverage.txt
+          go tool cover -html=coverage.out -o coverage.html
 
+      - name: Upload Redis coverage artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: redis-integration-coverage-report
+          path: |
+            coverage.out
+            coverage.txt
+            coverage.html
 
