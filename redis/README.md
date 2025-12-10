@@ -10,15 +10,7 @@
 - вы хотите, чтобы **дорогой запрос выполнялся ровно один раз на кластер** по данному ключу,
   а все остальные конкурирующие запросы ждали и переиспользовали результат.
 
-
-- **Адаптеры**: в пакете есть готовые реализации `Backend` для клиентов:
-  - `github.com/redis/go-redis/v9` (`NewGoRedisV9Backend`),
-  - `github.com/go-redis/redis/v8` (`NewGoRedisV8Backend`).
-  - `github.com/valkey-io/valkey-glide/go/v2` (`NewValkeyGlideBackend`).
-
-<div width="400">
-![singleflight+redis timeline](https://raw.githubusercontent.com/kozhurkin/singleflight/main/doc/distributed-timeline.png)
-</div>
+<div width="400">![singleflight+redis timeline](https://raw.githubusercontent.com/kozhurkin/singleflight/main/doc/distributed-timeline.png)</div>
 
 ### Пример: распределённый singleflight поверх Redis
 
@@ -60,4 +52,9 @@ func example() {
     _ = err
 }
 ```
+
+**Адаптеры**: в пакете есть готовые реализации `Backend` для клиентов:
+  - `github.com/redis/go-redis/v9` (`NewGoRedisV9Backend`),
+  - `github.com/go-redis/redis/v8` (`NewGoRedisV8Backend`).
+  - `github.com/valkey-io/valkey-glide/go/v2` (`NewValkeyGlideBackend`).
 
