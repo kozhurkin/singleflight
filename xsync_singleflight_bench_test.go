@@ -15,7 +15,7 @@ func BenchmarkDo_HighConcurrency(b *testing.B) {
 	var g xsingleflight.Group
 
 	var calls, hits int32
-	fn := func() (interface{}, error) {
+	fn := func() (any, error) {
 		atomic.AddInt32(&calls, 1)
 		time.Sleep(10 * time.Millisecond)
 		return 42, nil

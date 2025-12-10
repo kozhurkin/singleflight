@@ -4,14 +4,21 @@ import (
 	"context"
 	"time"
 
-	glide "github.com/valkey-io/valkey-glide/go/v2"
 	"github.com/valkey-io/valkey-glide/go/v2/constants"
+	"github.com/valkey-io/valkey-glide/go/v2/models"
 	"github.com/valkey-io/valkey-glide/go/v2/options"
 )
 
-// glideKVClient реализует KVClient поверх *glide.Client.
+type glideCommands interface {
+	Get(ctx context.Context, key string) (models.Result[string], error)
+	SetWithOptions(ctx context.Context, key string, value string, opts options.SetOptions) (models.Result[string], error)
+	InvokeScriptWithOptions(ctx context.Context, script options.Script, opts options.ScriptOptions) (any, error)
+}
+
+// glideKVClient реализует KVClient поверх клиента Valkey GLIDE,
+// удовлетворяющего интерфейсу glideCommands (например, *glide.Client или *glide.ClusterClient).
 type glideKVClient struct {
-	c *glide.Client
+	c glideCommands
 }
 
 // GetBytes должен вернуть значение ключа в виде []byte или ошибку.
@@ -52,44 +59,34 @@ func (v glideKVClient) SetNX(ctx context.Context, key, value string, ttl time.Du
 	return !result.IsNil(), nil
 }
 
-// glideLuaScript — каркас реализации LuaScript поверх Valkey GLIDE.
-// В продакшене её нужно реализовать через поддержку EVAL/EVALSHA (если она есть в клиенте).
+// glideLuaScript реализует LuaScript поверх Valkey GLIDE с помощью InvokeScriptWithOptions.
 type glideLuaScript struct {
-	client *glide.Client
-	source string
+	c glideCommands
+	s string
 }
 
-func (s glideLuaScript) Run(ctx context.Context, keys []string, args ...string) (interface{}, error) {
-	script := *options.NewScript(s.source)
+func (s glideLuaScript) Run(ctx context.Context, keys []string, args ...string) (any, error) {
+	script := *options.NewScript(s.s)
 
 	scriptOpts := options.ScriptOptions{
 		Keys: keys,
 		Args: args,
 	}
 
-	return s.client.InvokeScriptWithOptions(ctx, script, scriptOpts)
+	return s.c.InvokeScriptWithOptions(ctx, script, scriptOpts)
 }
 
-// NewValkeyGlideBackend создаёт Backend поверх github.com/valkey-io/valkey-glide/go.
-// Предполагается, что конфигурация и создание *glide.GlideClient выполняются снаружи.
-func NewValkeyGlideBackend(c *glide.Client) Backend {
+// NewValkeyGlideBackend создаёт Backend поверх клиента Valkey GLIDE,
+// удовлетворяющего интерфейсу glideCommands (например, *glide.Client или *glide.ClusterClient).
+func NewValkeyGlideBackend(c glideCommands) Backend {
 	kv := glideKVClient{c: c}
 
 	return &redisBackend{
 		kv: kv,
 		scripts: scripts{
-			getWithTTL: glideLuaScript{
-				client: c,
-				source: luaGetWithTTLSource,
-			},
-			unlock: glideLuaScript{
-				client: c,
-				source: luaUnlockSource,
-			},
-			unlockAndSetResult: glideLuaScript{
-				client: c,
-				source: luaUnlockAndSetResultSource,
-			},
+			getWithTTL:   glideLuaScript{c: c, s: luaGetWithTTLSource},
+			unlock:       glideLuaScript{c: c, s: luaUnlockSource},
+			unlockAndSet: glideLuaScript{c: c, s: luaUnlockAndSetSource},
 		},
 	}
 }

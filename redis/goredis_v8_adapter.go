@@ -37,8 +37,8 @@ type v8LuaScript struct {
 	s *redisv8.Script
 }
 
-func (s v8LuaScript) Run(ctx context.Context, keys []string, args ...string) (interface{}, error) {
-	iargs := make([]interface{}, len(args))
+func (s v8LuaScript) Run(ctx context.Context, keys []string, args ...string) (any, error) {
+	iargs := make([]any, len(args))
 	for i := range args {
 		iargs[i] = args[i]
 	}
@@ -57,7 +57,7 @@ func NewGoRedisV8Backend(c *redisv8.Client) Backend {
 		scripts: scripts{
 			getWithTTL:         v8LuaScript{c: c, s: redisv8.NewScript(luaGetWithTTLSource)},
 			unlock:             v8LuaScript{c: c, s: redisv8.NewScript(luaUnlockSource)},
-			unlockAndSetResult: v8LuaScript{c: c, s: redisv8.NewScript(luaUnlockAndSetResultSource)},
+			unlockAndSet:       v8LuaScript{c: c, s: redisv8.NewScript(luaUnlockAndSetSource)},
 		},
 	}
 }

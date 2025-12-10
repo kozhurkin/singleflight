@@ -37,8 +37,8 @@ type v9LuaScript struct {
 	s *redisv9.Script
 }
 
-func (s v9LuaScript) Run(ctx context.Context, keys []string, args ...string) (interface{}, error) {
-	iargs := make([]interface{}, len(args))
+func (s v9LuaScript) Run(ctx context.Context, keys []string, args ...string) (any, error) {
+	iargs := make([]any, len(args))
 	for i := range args {
 		iargs[i] = args[i]
 	}
@@ -57,7 +57,7 @@ func NewGoRedisV9Backend(c *redisv9.Client) Backend {
 		scripts: scripts{
 			getWithTTL:         v9LuaScript{c: c, s: redisv9.NewScript(luaGetWithTTLSource)},
 			unlock:             v9LuaScript{c: c, s: redisv9.NewScript(luaUnlockSource)},
-			unlockAndSetResult: v9LuaScript{c: c, s: redisv9.NewScript(luaUnlockAndSetResultSource)},
+			unlockAndSet:       v9LuaScript{c: c, s: redisv9.NewScript(luaUnlockAndSetSource)},
 		},
 	}
 }

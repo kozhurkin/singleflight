@@ -25,8 +25,9 @@ type KVClient interface {
 
 // LuaScript — минимальный интерфейс для Lua-скрипта.
 type LuaScript interface {
-	// Run выполняет скрипт для набора ключей и аргументов и возвращает "сырое" значение.
-	Run(ctx context.Context, keys []string, args ...string) (interface{}, error)
+	// Run выполняет скрипт для набора ключей (KEYS) и строковых аргументов (ARGV)
+	// и возвращает "сырое" значение, как его вернул Redis.
+	Run(ctx context.Context, keys []string, args ...string) (any, error)
 }
 
 // Экспортируемые ошибки, которые может возвращать Redis-бэкенд.
@@ -50,8 +51,8 @@ var (
 //	{ v, ttl }
 //
 // где v — string или nil, ttl — int64 (PTTL в миллисекундах).
-func parseGetWithTTL(raw interface{}) (data []byte, found bool, ttl time.Duration, err error) {
-	values, ok := raw.([]interface{})
+func parseGetWithTTL(raw any) (data []byte, found bool, ttl time.Duration, err error) {
+	values, ok := raw.([]any)
 	if !ok || len(values) != 2 {
 		return nil, false, 0, fmt.Errorf("%w: %#v", ErrInvalidLuaResult, raw)
 	}
@@ -99,7 +100,7 @@ else
 end
 `
 
-	luaUnlockAndSetResultSource = `
+	luaUnlockAndSetSource = `
 if redis.call("get", KEYS[1]) == ARGV[1] then
 	redis.call("del", KEYS[1])
 	redis.call("set", KEYS[2], ARGV[2], "PX", ARGV[3])
@@ -114,7 +115,7 @@ end
 type scripts struct {
 	getWithTTL         LuaScript
 	unlock             LuaScript
-	unlockAndSetResult LuaScript
+	unlockAndSet       LuaScript
 }
 
 // redisBackend — реализация Backend поверх абстрактного KVClient и LuaScript.
@@ -172,7 +173,7 @@ func (b *redisBackend) UnlockAndSetResult(
 	data []byte,
 	ttl time.Duration,
 ) (bool, error) {
-	raw, err := b.scripts.unlockAndSetResult.Run(
+	raw, err := b.scripts.unlockAndSet.Run(
 		ctx,
 		[]string{lockKey, resultKey},
 		lockValue,
