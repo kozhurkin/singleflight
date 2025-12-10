@@ -1,17 +1,24 @@
-## redisflight (distributed singleflight backend)
+## redisflight (distributed singleflight)
 
 `redisflight` — это пакет для использования `singleflight`‑подобной дедупликации **между процессами** поверх Redis.
 
-- **Общий Backend-интерфейс**: пакет `redisflight` определяет интерфейс `Backend`, описывающий операции для:
-  - чтения/записи закодированного результата (`GetResult`, `SetResult`),
-  - распределённых блокировок (`TryLock`, `Unlock`, `UnlockAndSetResult`),
-  - опционального атомарного чтения значения вместе с TTL (`GetResultWithTTL`).
-- **Генерик‑группа `Group`**: реализует дедупликацию и кеширование результатов так же, как in‑memory `singleflight.Group`, но поверх любого `Backend`.
-- **Адаптеры под go-redis**: в пакете есть готовые реализации `Backend` для клиентов:
+### Когда использовать
+
+Используйте `redisflight.Group`, если:
+
+- у вас несколько инстансов сервиса (k8s, ECS, bare-metal) и
+- вы хотите, чтобы **дорогой запрос выполнялся ровно один раз на кластер** по данному ключу,
+  а все остальные конкурирующие запросы ждали и переиспользовали результат.
+
+
+- **Адаптеры**: в пакете есть готовые реализации `Backend` для клиентов:
   - `github.com/redis/go-redis/v9` (`NewGoRedisV9Backend`),
   - `github.com/go-redis/redis/v8` (`NewGoRedisV8Backend`).
+  - `github.com/valkey-io/valkey-glide/go/v2` (`NewValkeyGlideBackend`).
 
-  ![singleflight+redis timeline](https://raw.githubusercontent.com/kozhurkin/singleflight/main/doc/distributed-timeline.png)
+<div width="400">
+![singleflight+redis timeline](https://raw.githubusercontent.com/kozhurkin/singleflight/main/doc/distributed-timeline.png)
+</div>
 
 ### Пример: распределённый singleflight поверх Redis
 
@@ -53,13 +60,4 @@ func example() {
     _ = err
 }
 ```
-
-### Когда использовать
-
-Используйте `redisflight.Group`, если:
-
-- у вас несколько инстансов сервиса (k8s, ECS, bare-metal) и
-- вы хотите, чтобы **дорогой запрос выполнялся ровно один раз на кластер** по данному ключу,
-  а все остальные конкурирующие запросы ждали и переиспользовали результат.
-
 
