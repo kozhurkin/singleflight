@@ -3,12 +3,16 @@ package redisflight
 import (
 	"context"
 	"fmt"
+	"github.com/valkey-io/valkey-glide/go/v2/config"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	redisv8 "github.com/go-redis/redis/v8"
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
+	glide "github.com/valkey-io/valkey-glide/go/v2"
 )
 
 func newBackendTestKey(t *testing.T, prefix string) string {
@@ -52,6 +56,29 @@ func newTestRedisClientV8(t *testing.T) *redisv8.Client {
 	return client
 }
 
+// newTestValkeyGlideClient создаёт клиента Valkey GLIDE и скипает тест, если Valkey/Redis недоступен.
+func newTestValkeyGlideClient(t *testing.T) *glide.Client {
+	t.Helper()
+
+	addr := strings.Split(redisAddr(), ":")
+	o := &config.NodeAddress{Host: addr[0]}
+	if len(addr) > 1 {
+		o.Port, _ = strconv.Atoi(addr[1])
+	}
+
+	client, err := glide.NewClient(config.NewClientConfiguration().WithAddress(o))
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	if _, err := client.Ping(ctx); err != nil {
+		t.Skipf("valkey-glide is not available at %s: %v", redisAddr(), err)
+	}
+
+	return client
+}
+
 type backendFixture struct {
 	name     string
 	backend  Backend
@@ -62,8 +89,24 @@ type backendFixture struct {
 func redisBackends(t *testing.T) []backendFixture {
 	v9 := newTestRedisClientV9(t)
 	v8 := newTestRedisClientV8(t)
+	valkey := newTestValkeyGlideClient(t)
 
 	return []backendFixture{
+		{
+			name:    "valkey-glide",
+			backend: NewValkeyGlideBackend(valkey),
+			del: func(ctx context.Context, keys ...string) error {
+				if len(keys) == 0 {
+					return nil
+				}
+				_, err := valkey.Del(ctx, keys)
+				return err
+			},
+			setNoTTL: func(ctx context.Context, key string, val []byte) error {
+				_, err := valkey.Set(ctx, key, string(val))
+				return err
+			},
+		},
 		{
 			name:    "v9",
 			backend: NewGoRedisV9Backend(v9),
@@ -244,5 +287,3 @@ func TestBackends_GetResultWithTTL(t *testing.T) {
 		})
 	}
 }
-
-

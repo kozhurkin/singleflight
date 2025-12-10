@@ -13,7 +13,14 @@ type v8KVClient struct {
 }
 
 func (v v8KVClient) GetBytes(ctx context.Context, key string) ([]byte, error) {
-	return v.c.Get(ctx, key).Bytes()
+	res, err := v.c.Get(ctx, key).Result()
+	if err == redisv8.Nil {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return []byte(res), nil
 }
 
 func (v v8KVClient) SetBytes(ctx context.Context, key string, value []byte, ttl time.Duration) error {
@@ -24,18 +31,18 @@ func (v v8KVClient) SetNX(ctx context.Context, key, value string, ttl time.Durat
 	return v.c.SetNX(ctx, key, value, ttl).Result()
 }
 
-func (v v8KVClient) IsNil(err error) bool {
-	return err == redisv8.Nil
-}
-
 // v8LuaScript реализует LuaScript поверх *redisv8.Script.
 type v8LuaScript struct {
 	c *redisv8.Client
 	s *redisv8.Script
 }
 
-func (s v8LuaScript) Run(ctx context.Context, keys []string, args ...interface{}) (interface{}, error) {
-	cmd := s.s.Run(ctx, s.c, keys, args...)
+func (s v8LuaScript) Run(ctx context.Context, keys []string, args ...string) (interface{}, error) {
+	iargs := make([]interface{}, len(args))
+	for i := range args {
+		iargs[i] = args[i]
+	}
+	cmd := s.s.Run(ctx, s.c, keys, iargs...)
 	if err := cmd.Err(); err != nil {
 		return nil, err
 	}

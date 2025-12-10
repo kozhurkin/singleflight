@@ -4,14 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 )
 
 // KVClient — минимальный интерфейс для операций с ключом/значением.
-// Конкретные адаптеры (go-redis v9/v8 и др.) реализуют его поверх своих клиентов.
+// Конкретные адаптеры (go-redis v9/v8, Valkey GLIDE и др.) реализуют его поверх своих клиентов.
 type KVClient interface {
-	// GetBytes возвращает байты или ошибку. Если ключа нет, вернётся ошибка,
-	// которую нужно уметь распознать через IsNil.
+	// GetBytes возвращает байты или ошибку.
+	// Если ключ не существует, адаптер ДОЛЖЕН вернуть (nil, nil).
+	// Если ключ существует и значение пустое, он возвращает ([]byte{}, nil).
 	GetBytes(ctx context.Context, key string) ([]byte, error)
 
 	// SetBytes сохраняет значение с TTL.
@@ -19,15 +21,12 @@ type KVClient interface {
 
 	// SetNX пытается установить значение с TTL, если ключ не существует.
 	SetNX(ctx context.Context, key, value string, ttl time.Duration) (bool, error)
-
-	// IsNil возвращает true, если ошибка означает "ключ не найден".
-	IsNil(err error) bool
 }
 
 // LuaScript — минимальный интерфейс для Lua-скрипта.
 type LuaScript interface {
 	// Run выполняет скрипт для набора ключей и аргументов и возвращает "сырое" значение.
-	Run(ctx context.Context, keys []string, args ...interface{}) (interface{}, error)
+	Run(ctx context.Context, keys []string, args ...string) (interface{}, error)
 }
 
 // Экспортируемые ошибки, которые может возвращать Redis-бэкенд.
@@ -47,7 +46,9 @@ var (
 
 // parseGetWithTTL разбирает ответ Lua-скрипта {value, ttlMs} в удобный вид.
 // Ожидаемый формат:
-//   { v, ttl }
+//
+//	{ v, ttl }
+//
 // где v — string или nil, ttl — int64 (PTTL в миллисекундах).
 func parseGetWithTTL(raw interface{}) (data []byte, found bool, ttl time.Duration, err error) {
 	values, ok := raw.([]interface{})
@@ -135,13 +136,14 @@ func (b *redisBackend) GetResultWithTTL(ctx context.Context, resultKey string) (
 
 func (b *redisBackend) GetResult(ctx context.Context, resultKey string) ([]byte, bool, error) {
 	data, err := b.kv.GetBytes(ctx, resultKey)
-	if err == nil {
-		return data, true, nil
+	if err != nil {
+		return nil, false, err
 	}
-	if b.kv.IsNil(err) {
+	if data == nil {
+		// Ключ не найден.
 		return nil, false, nil
 	}
-	return nil, false, err
+	return data, true, nil
 }
 
 func (b *redisBackend) SetResult(ctx context.Context, resultKey string, data []byte, ttl time.Duration) error {
@@ -174,8 +176,8 @@ func (b *redisBackend) UnlockAndSetResult(
 		ctx,
 		[]string{lockKey, resultKey},
 		lockValue,
-		data,
-		int(ttl.Milliseconds()),
+		string(data),
+		strconv.FormatInt(ttl.Milliseconds(), 10),
 	)
 	if err != nil {
 		return false, err
@@ -186,6 +188,3 @@ func (b *redisBackend) UnlockAndSetResult(
 	}
 	return n > 0, nil
 }
-
-
-
