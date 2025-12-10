@@ -12,7 +12,7 @@
 
 <img src="https://raw.githubusercontent.com/kozhurkin/singleflight/main/doc/distributed-timeline.png" width="780" />
 
-### Пример
+### Пример использования
 
 ```go
 import (
