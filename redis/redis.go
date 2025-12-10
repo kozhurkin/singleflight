@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
+	"github.com/kozhurkin/singleflight"
 	"github.com/google/uuid"
 )
 
@@ -16,23 +18,56 @@ type Group[V any] struct {
 	lockTTL      time.Duration // TTL блокировки
 	resultTTL    time.Duration // TTL хранения результата
 	pollInterval time.Duration // интервал опроса результата
-	warmupWindow time.Duration // окно прогрева результата (пока не используется)
+	warmupWindow time.Duration // окно прогрева результата (0 — прогрев отключён)
+	prefix       string        // префикс для lock/result ключей
+	localGroup   *singleflight.Group[string, V]
 }
 
-// NewGroup создаёт Group поверх указанного Backend.
-func NewGroup[V any](backend Backend, lockTTL, resultTTL, pollInterval, warmupWindow time.Duration) *Group[V] {
-	return &Group[V]{
+var (
+	// ErrInvalidLockTTL означает, что lockTTL < 1ms.
+	ErrInvalidLockTTL = errors.New("redisflight: lockTTL must be >= 1ms")
+	// ErrInvalidResultTTL означает, что resultTTL < 1ms.
+	ErrInvalidResultTTL = errors.New("redisflight: resultTTL must be >= 1ms")
+	// ErrResultTTLNotGreaterThanPollInterval означает, что resultTTL <= pollInterval.
+	ErrResultTTLNotGreaterThanPollInterval = errors.New("redisflight: resultTTL must be > pollInterval")
+)
+
+// NewGroup создаёт Group поверх указанного Backend с заданными базовыми параметрами.
+// Дополнительные параметры могут быть заданы через опции (WithWarmupWindow, WithPrefix, WithLocalDeduplication и др.).
+func NewGroup[V any](backend Backend, lockTTL, resultTTL, pollInterval time.Duration, opts ...Option[V]) *Group[V] {
+	if lockTTL < time.Millisecond {
+		panic(fmt.Errorf("%w: got %s", ErrInvalidLockTTL, lockTTL))
+	}
+	if resultTTL < time.Millisecond {
+		panic(fmt.Errorf("%w: got %s", ErrInvalidResultTTL, resultTTL))
+	}
+	if resultTTL <= pollInterval {
+		panic(fmt.Errorf("%w: resultTTL=%s, pollInterval=%s", ErrResultTTLNotGreaterThanPollInterval, resultTTL, pollInterval))
+	}
+
+	g := &Group[V]{
 		backend:      backend,
 		lockTTL:      lockTTL,
 		resultTTL:    resultTTL,
 		pollInterval: pollInterval,
-		warmupWindow: warmupWindow,
 	}
+	for _, opt := range opts {
+		opt(g)
+	}
+	return g
 }
 
 // Do выполняет вычисление для key с использованием контекста Background.
 // Для тонкого контроля отмены/дедлайнов используйте DoCtx.
 func (g *Group[V]) Do(key string, fn func() (V, error)) (V, error) {
+	// Если локальная дедупликация включена, используем её, чтобы несколько
+	// конкурентных вызовов Do с одного процесса по одному key не ходили в Backend.
+	if g.localGroup != nil {
+		return g.localGroup.Do(key, func() (V, error) {
+			return g.DoCtx(context.Background(), key, fn)
+		})
+	}
+
 	return g.DoCtx(context.Background(), key, fn)
 }
 
@@ -40,8 +75,8 @@ func (g *Group[V]) Do(key string, fn func() (V, error)) (V, error) {
 func (g *Group[V]) DoCtx(ctx context.Context, key string, fn func() (V, error)) (V, error) {
 	var zero V
 
-	lockKey := "lock:" + key
-	resultKey := "result:" + key
+	lockKey := g.prefix + "lock:" + key
+	resultKey := g.prefix + "result:" + key
 
 	// Сначала пробуем получить результат из кеша вместе с TTL
 	if res, found, ttl, err := g.getResultWithTTL(ctx, resultKey); err != nil {
@@ -182,7 +217,7 @@ func (g *Group[V]) unlockAndSetResult(ctx context.Context, lockKey, resultKey, l
 		resultKey,
 		lockValue,
 		data,
-		g.resultTTL,
+		g.resultTTL+g.warmupWindow,
 	)
 	if err != nil {
 		return false, &BackendError{Op: "UnlockAndSetResult", Err: err}
@@ -212,7 +247,7 @@ func (g *Group[V]) setResult(ctx context.Context, resultKey string, res V) error
 		return err
 	}
 
-	if err := g.backend.SetResult(ctx, resultKey, data, g.resultTTL); err != nil {
+	if err := g.backend.SetResult(ctx, resultKey, data, g.resultTTL+g.warmupWindow); err != nil {
 		return &BackendError{Op: "SetResult", Err: err}
 	}
 	return nil

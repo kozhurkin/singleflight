@@ -36,6 +36,9 @@ func example() {
         2*time.Second,       // lockTTL
         5*time.Second,       // resultTTL
         50*time.Millisecond, // pollInterval для ожидания результата
+        // redisflight.WithWarmupWindow[int](500*time.Millisecond),
+        // redisflight.WithPrefix[int]("sf:"),
+        // redisflight.WithLocalDeduplication[int](true),
     )
 
     // Все процессы/инстансы, использующие один и тот же Redis и ключ,

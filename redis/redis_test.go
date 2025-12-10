@@ -127,7 +127,6 @@ func TestGroup_MultiProcess_Helper(t *testing.T) {
 		2*time.Second,       // lockTTL
 		5*time.Second,       // resultTTL
 		50*time.Millisecond, // pollInterval
-		0,                   // warmupWindow
 	)
 
 	fn := func() (int, error) {
