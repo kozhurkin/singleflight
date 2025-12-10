@@ -28,7 +28,7 @@ func example() {
         Addr: "127.0.0.1:6379",
     })
 
-    // адаптер к Backend-интерфейсу
+    // адаптер для клиента
     backend := redisflight.NewGoRedisV9Backend(rdb)
 
     // распределённая группа: lockTTL, resultTTL, pollInterval
@@ -36,7 +36,7 @@ func example() {
         backend,
         2*time.Second,       // lockTTL
         5*time.Second,       // resultTTL
-        50*time.Millisecond, // pollInterval для ожидания результата
+        50*time.Millisecond, // pollInterval
         // redisflight.WithWarmupWindow[int](500*time.Millisecond),
         // redisflight.WithPrefix[int]("sf:"),
         // redisflight.WithLocalDeduplication[int](true),
@@ -48,8 +48,8 @@ func example() {
         // дорогое вычисление, например HTTP-запрос к внешнему API
         return 42, nil
     })
-    _ = res
-    _ = err
+
+    // ...
 }
 ```
 
@@ -100,6 +100,6 @@ func NewGroup[V any](
     - Включает «окно прогрева» результата.  
     - В интервале `resultTTL` результат всегда просто берётся из кеша.  
     - После этого, в течение дополнительного окна прогрева `d`:
-      - первый запрос по ключу получает **старое** значение из кеша,  
+      - первый запрос по ключу получает **старое** значение из кеша,
       - параллельно асинхронно запускается пересчёт и обновление результата в Redis.  
     - При `d == 0` прогрев отключён.
