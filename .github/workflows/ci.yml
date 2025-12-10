@@ -20,7 +20,7 @@ jobs:
 
       - name: Run tests with coverage
         run: |
-          go test . ./flight/... -covermode=atomic -coverprofile=coverage.out
+          go test . ./flight/... -v -covermode=atomic -coverprofile=coverage.out
           go tool cover -func=coverage.out | tee coverage.txt
           go tool cover -html=coverage.out -o coverage.html
 
@@ -70,6 +70,6 @@ jobs:
           go-version: '1.21.x'
 
       - name: Run Redis-dependent tests
-        run: go test ./redis -v
+        run: go test ./redis -v -covermode=atomic -coverprofile=coverage.out
 
 

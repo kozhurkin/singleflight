@@ -11,6 +11,8 @@
   - `github.com/redis/go-redis/v9` (`NewGoRedisV9Backend`),
   - `github.com/go-redis/redis/v8` (`NewGoRedisV8Backend`).
 
+  ![singleflight+redis timeline](https://raw.githubusercontent.com/kozhurkin/singleflight/main/doc/distributed-timeline.png)
+
 ### Пример: распределённый singleflight поверх Redis
 
 ```go
