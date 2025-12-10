@@ -53,7 +53,7 @@ func example() {
 }
 ```
 
-### Пример
+### Адаптеры
 В пакете есть готовые реализации `Backend` для клиентов:
   - `github.com/redis/go-redis/v9` (`NewGoRedisV9Backend`),
   - `github.com/go-redis/redis/v8` (`NewGoRedisV8Backend`),
