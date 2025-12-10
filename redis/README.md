@@ -10,7 +10,7 @@
 
 ### Схема работы
 
-<img src="https://raw.githubusercontent.com/kozhurkin/singleflight/main/doc/distributed-timeline.png" width="640" />
+<img src="https://raw.githubusercontent.com/kozhurkin/singleflight/main/doc/distributed-timeline.png" width="780" />
 
 ### Пример: распределённый singleflight поверх Redis
 
