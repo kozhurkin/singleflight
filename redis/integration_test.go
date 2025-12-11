@@ -94,22 +94,28 @@ func TestGroup_MultiProcess_UsesSingleComputation(t *testing.T) {
 }
 
 // TestGroup_MultiProcess_RecomputesOnResultTTL запускает несколько процессов,
-// которые в течение фиксированного времени (1 секунда) активно вызывают Do по одному
-// и тому же ключу. При resultTTL=100ms мы ожидаем, что реальное вычисление fn (INCR
-// счётчика в Redis) произойдёт примерно 10 раз — по одному разу на каждый интервал TTL.
+// которые в течение фиксированного времени активно вызывают Do по одному и тому же ключу
+// и проверяет, что количество реальных вычислений fn совпадает с ожиданиями.
 func TestGroup_MultiProcess_RecomputesOnResultTTL(t *testing.T) {
-	runMultiProcessRecomputesOnResultTTL(t, false)
+	runMultiProcessRecomputesOnResultTTL(t, false, 0)
 }
 
 // TestGroup_MultiProcess_RecomputesOnResultTTL_WithLocalDeduplication делает то же самое,
 // что и TestGroup_MultiProcess_RecomputesOnResultTTL, но с включённой локальной дедупликацией
 // (WithLocalDeduplication). Ожидаемый результат не должен меняться.
 func TestGroup_MultiProcess_RecomputesOnResultTTL_WithLocalDeduplication(t *testing.T) {
-	runMultiProcessRecomputesOnResultTTL(t, true)
+	runMultiProcessRecomputesOnResultTTL(t, true, 0)
+}
+
+// TestGroup_MultiProcess_RecomputesOnResultTTL_WithWarmupWindow проверяет тот же сценарий,
+// но с включённым окном прогрева результата (WithWarmupWindow). Ожидаемый результат также
+// не должен меняться.
+func TestGroup_MultiProcess_RecomputesOnResultTTL_WithWarmupWindow(t *testing.T) {
+	runMultiProcessRecomputesOnResultTTL(t, false, 100*time.Millisecond)
 }
 
 // runMultiProcessRecomputesOnResultTTL содержит общую логику для интеграционных тестов выше.
-func runMultiProcessRecomputesOnResultTTL(t *testing.T, enableLocalDedup bool) {
+func runMultiProcessRecomputesOnResultTTL(t *testing.T, enableLocalDedup bool, warmupWindow time.Duration) {
 	const (
 		lockTTL      = 50 * time.Millisecond
 		resultTTL    = 200 * time.Millisecond
@@ -162,6 +168,9 @@ func runMultiProcessRecomputesOnResultTTL(t *testing.T, enableLocalDedup bool) {
 		if enableLocalDedup {
 			env = append(env, "GROUP_LOCAL_DEDUP=true")
 		}
+		if warmupWindow > 0 {
+			env = append(env, "GROUP_WARMUP_WINDOW="+warmupWindow.String())
+		}
 		cmd.Env = append(os.Environ(), env...)
 		cmds = append(cmds, cmd)
 	}
@@ -205,6 +214,7 @@ func runMultiProcessRecomputesOnResultTTL(t *testing.T, enableLocalDedup bool) {
 //   - GROUP_RESULT_TTL    — TTL результата;
 //   - GROUP_POLL_INTERVAL — интервал опроса результата конкурентами;
 //   - GROUP_LOCAL_DEDUP   — если непустой, включает локальную дедупликацию (WithLocalDeduplication);
+//   - GROUP_WARMUP_WINDOW — если непустой, включает окно прогрева (WithWarmupWindow);
 //   - CLIENT_COUNT        — сколько раз вызвать Do;
 //   - CLIENT_INTERVAL     — пауза между вызовами (Go duration, например "0s", "110ms").
 func TestGroup_MultiProcess_Helper(t *testing.T) {
@@ -253,6 +263,14 @@ func TestGroup_MultiProcess_Helper(t *testing.T) {
 		os.Exit(2)
 	}
 	enableLocalDedup := os.Getenv("GROUP_LOCAL_DEDUP") != ""
+	var warmupWindow time.Duration
+	if s := os.Getenv("GROUP_WARMUP_WINDOW"); s != "" {
+		warmupWindow, err = time.ParseDuration(s)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "helper: invalid GROUP_WARMUP_WINDOW: %v\n", err)
+			os.Exit(2)
+		}
+	}
 
 	client := goredis.NewClient(&goredis.Options{
 		Addr: redisAddr(),
@@ -269,6 +287,9 @@ func TestGroup_MultiProcess_Helper(t *testing.T) {
 	opts := []Option[int]{}
 	if enableLocalDedup {
 		opts = append(opts, WithLocalDeduplication[int](true))
+	}
+	if warmupWindow > 0 {
+		opts = append(opts, WithWarmupWindow[int](warmupWindow))
 	}
 
 	g := NewGroup(backend, lockTTL, resultTTL, pollInterval, opts...)
