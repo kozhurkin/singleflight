@@ -265,12 +265,10 @@ func TestGroup_MultiProcess_Helper(t *testing.T) {
 	}
 
 	for i := 0; i < count; i++ {
+		time.Sleep(interval)
 		if _, err := g.Do(key, fn); err != nil {
 			fmt.Fprintf(os.Stderr, "helper: Do failed: %v\n", err)
 			os.Exit(1)
-		}
-		if i+1 < count {
-			time.Sleep(interval)
 		}
 	}
 }
