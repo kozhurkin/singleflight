@@ -125,7 +125,7 @@ func runMultiProcessRecomputesOnResultTTL(t *testing.T, enableLocalDedup bool, w
 		testDuration   = time.Second
 		expectedResult = int(testDuration / resultTTL)
 
-		interval = 25 * time.Millisecond
+		interval = 5 * time.Millisecond
 		count    = testDuration / interval
 	)
 
@@ -147,7 +147,8 @@ func runMultiProcessRecomputesOnResultTTL(t *testing.T, enableLocalDedup bool, w
 	for i := 0; i < workers; i++ {
 		// Запускаем текущий тестовый бинарник как отдельный процесс,
 		// который выполнит helper-тест TestGroup_MultiProcess_Helper.
-		// Здесь каждый процесс сделает count запросов с паузой interval между ними.
+		// Здесь каждый процесс сделает count запросов с паузой interval между ними
+		// или завершится по CLIENT_TIMEOUT (если он задан).
 		cmd := exec.Command(os.Args[0],
 			"-test.run=TestGroup_MultiProcess_Helper",
 			"--",
@@ -164,6 +165,7 @@ func runMultiProcessRecomputesOnResultTTL(t *testing.T, enableLocalDedup bool, w
 			"GROUP_POLL_INTERVAL=" + pollInterval.String(),
 			"CLIENT_COUNT=" + fmt.Sprintf("%d", count),
 			"CLIENT_INTERVAL=" + interval.String(),
+			"CLIENT_TIMEOUT=" + testDuration.String(),
 		}
 		if enableLocalDedup {
 			env = append(env, "GROUP_LOCAL_DEDUP=true")
@@ -214,7 +216,9 @@ func runMultiProcessRecomputesOnResultTTL(t *testing.T, enableLocalDedup bool, w
 //   - GROUP_LOCAL_DEDUP   — если непустой, включает локальную дедупликацию (WithLocalDeduplication);
 //   - GROUP_WARMUP_WINDOW — если непустой, включает окно прогрева (WithWarmupWindow);
 //   - CLIENT_COUNT        — сколько раз вызвать Do;
-//   - CLIENT_INTERVAL     — пауза между вызовами (Go duration, например "0s", "110ms").
+//   - CLIENT_INTERVAL     — пауза между вызовами (Go duration, например "0s", "110ms");
+//   - CLIENT_TIMEOUT      — максимальная длительность работы клиента; по истечении цикла Do
+//     прекращается раньше, даже если CLIENT_COUNT ещё не исчерпан.
 func TestGroup_MultiProcess_Helper(t *testing.T) {
 	if os.Getenv("GO_WANT_HELPER_PROCESS") != "1" {
 		return
@@ -243,6 +247,16 @@ func TestGroup_MultiProcess_Helper(t *testing.T) {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "helper: invalid CLIENT_INTERVAL: %v\n", err)
 		os.Exit(2)
+	}
+	// CLIENT_TIMEOUT опционален: если не задан, клиент просто выполнит CLIENT_COUNT вызовов Do.
+	var clientDeadline time.Time
+	if s := os.Getenv("CLIENT_TIMEOUT"); s != "" {
+		timeout, err := time.ParseDuration(s)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "helper: invalid CLIENT_TIMEOUT: %v\n", err)
+			os.Exit(2)
+		}
+		clientDeadline = time.Now().Add(timeout)
 	}
 
 	lockTTL, err := time.ParseDuration(mustEnv("GROUP_LOCK_TTL"))
@@ -308,6 +322,11 @@ func TestGroup_MultiProcess_Helper(t *testing.T) {
 	}
 
 	for i := 0; i < count; i++ {
+		// Если задан CLIENT_TIMEOUT и он истёк — завершаем цикл без ошибки.
+		if !clientDeadline.IsZero() && time.Now().After(clientDeadline) {
+			break
+		}
+
 		if _, err := g.Do(key, fn); err != nil {
 			fmt.Fprintf(os.Stderr, "helper: Do failed: %v\n", err)
 			os.Exit(1)

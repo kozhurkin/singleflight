@@ -85,13 +85,18 @@ func (g *Group[V]) DoCtx(ctx context.Context, key string, fn func() (V, error)) 
 		// Если прогрев включен и TTL меньше окна прогрева, запускаем асинхронный прогрев.
 		if g.warmupWindow > 0 && ttl < g.warmupWindow {
 			// Запускаем асинхронный прогрев значения.
+			go g.underLock(ctx, lockKey, func(lockValue string) bool {
+				res, err := fn()
+				if err == nil {
+					g.setResult(ctx, resultKey, res)
+				}
+				return true
+			})
 			go g.computeAndStore(ctx, lockKey, resultKey, fn)
 			return res, nil
 		}
 		return res, nil
 	}
-
-	// DATA RACE
 
 	// Результат в кеше отсутствует — пробуем вычислить его под блокировкой.
 	if res, ok, err := g.computeAndStore(ctx, lockKey, resultKey, fn); err != nil {
@@ -187,6 +192,16 @@ func (g *Group[V]) computeAndStore(
 		return zero, ok, err
 	}
 
+	// DATA RACE detection:
+	// Между тем, как мы посмотрели кеш через getResultWithTTL и дошли до этого места,
+	// другой процесс теоретически уже мог успеть записать результат.
+	// Попробуем явно отловить такой сценарий: если сейчас результат уже есть в кеше,
+	// снимаем блокировку и возвращаем результат без повторного вычисления.
+	if res, found, err := g.getResult(ctx, resultKey); err == nil && found {
+		go g.backend.Unlock(ctx, lockKey, myUUID)
+		return res, true, nil
+	}
+
 	// Захватили блокировку — выполняем fn()
 	res, err := fn()
 	if err != nil {
@@ -200,6 +215,46 @@ func (g *Group[V]) computeAndStore(
 	}
 
 	return res, true, nil
+}
+
+// setResult сериализует результат и сохраняет его в Backend с TTL результата.
+func (g *Group[V]) setResult(ctx context.Context, resultKey string, res V) error {
+	data, err := json.Marshal(res)
+	if err != nil {
+		return err
+	}
+
+	if err := g.backend.SetResult(ctx, resultKey, data, g.resultTTL+g.warmupWindow); err != nil {
+		return &BackendError{Op: "SetResult", Err: err}
+	}
+	return nil
+}
+
+// underLock пробует захватить блокировку по lockKey и, если это удалось,
+// вызывает body(lockValue). Если body вернуло true, блокировка будет снята
+// через Backend.Unlock, иначе останется до TTL или явного удаления.
+// Возвращаемые значения:
+//   - bool  — удалось ли захватить блокировку;
+//   - error — ошибка при захвате блокировки или при снятии.
+func (g *Group[V]) underLock(
+	ctx context.Context,
+	lockKey string,
+	body func(lockValue string) bool,
+) (bool, error) {
+	lockValue, ok, err := g.lock(ctx, lockKey)
+	if err != nil || !ok {
+		return ok, err
+	}
+
+	shouldUnlock := body(lockValue)
+
+	if shouldUnlock {
+		if _, err := g.backend.Unlock(ctx, lockKey, lockValue); err != nil {
+			return true, &BackendError{Op: "Unlock", Err: err}
+		}
+	}
+
+	return true, nil
 }
 
 // unlockAndSetResult сериализует результат, снимает блокировку и сохраняет результат в Backend.
