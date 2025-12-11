@@ -67,7 +67,7 @@ func NewGroup[V any](
 
 - **`backend Backend`**
   - Конкретная реализация интерфейса `Backend` (Redis, Valkey и т.п.).
-  - Определяет: **куда** сохраняются значения и блокировки; **каким клиентом** выполняются операции.
+  - Определяет **куда и каким клиентом** сохраняются блокировки и результаты.
   - В пакете есть готовые реализации `Backend` для клиентов:
     - `github.com/redis/go-redis/v9` (`NewGoRedisV9Backend`),
     - `github.com/go-redis/redis/v8` (`NewGoRedisV8Backend`),
