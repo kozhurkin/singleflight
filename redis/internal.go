@@ -71,9 +71,9 @@ func parseGetWithTTL(raw any) (data []byte, found bool, ttl time.Duration, err e
 	// Второй элемент — PTTL в миллисекундах: >=0, -1 (без TTL), -2 (нет ключа).
 	ttlMs, ok := values[1].(int64)
 	if !ok {
-		// На практике клиент должен возвращать int64, но если что-то пошло не так —
-		// считаем TTL неизвестным (0), но значение возвращаем.
-		return []byte(s), true, 0, nil
+		// На практике клиент должен возвращать int64; если тип другой — это ошибка формата ответа.
+		// Отдаём её наверх, чтобы вызывающий код мог явно отреагировать.
+		return nil, false, 0, fmt.Errorf("%w: %T", ErrInvalidLuaValueType, values[1])
 	}
 
 	if ttlMs > 0 {
@@ -113,9 +113,9 @@ end
 
 // scripts инкапсулирует Lua-скрипты, используемые Backend'ом.
 type scripts struct {
-	getWithTTL         LuaScript
-	unlock             LuaScript
-	unlockAndSet       LuaScript
+	getWithTTL   LuaScript
+	unlock       LuaScript
+	unlockAndSet LuaScript
 }
 
 // redisBackend — реализация Backend поверх абстрактного KVClient и LuaScript.
