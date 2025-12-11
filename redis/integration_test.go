@@ -50,7 +50,6 @@ func TestGroup_MultiProcess_UsesSingleComputation(t *testing.T) {
 		)
 
 		// Пробрасываем вывод helper-процесса в stderr теста, чтобы логи были видны при падении.
-		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 
 		// Наследуем окружение и добавляем маркеры/параметры для helper-процесса.
@@ -180,7 +179,6 @@ func runMultiProcessRecomputesOnResultTTL(t *testing.T, enableLocalDedup bool, w
 		cmd.Env = append(os.Environ(), env...)
 
 		// Пробрасываем вывод helper-процесса в stderr теста, чтобы логи были видны при падении.
-		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 
 		cmds = append(cmds, cmd)
