@@ -147,6 +147,50 @@ func (g *Group[V]) DoCtx(ctx context.Context, key string, fn func() (V, error)) 
 	}
 }
 
+// needWarmup возвращает true, если для данного остаточного TTL нужно запускать прогрев.
+func (g *Group[V]) needWarmup(ttl time.Duration) bool {
+	return g.warmupWindow > 0 && ttl > 0 && ttl < g.warmupWindow
+}
+
+// computeAndStore захватывает блокировку для lockKey, вычисляет fn и,
+// если всё прошло успешно, сериализует и сохраняет результат в resultKey.
+// Возвращает:
+//   - V: вычисленное значение (валидно только при ok == true и err == nil),
+//   - bool: признак, удалось ли захватить блокировку,
+//   - error: ошибка при работе с Backend или в fn.
+func (g *Group[V]) computeAndStore(
+	ctx context.Context,
+	lockKey, resultKey string,
+	fn func() (V, error),
+) (V, bool, error) {
+	var zero V
+
+	myUUID, ok, err := g.lock(ctx, lockKey)
+	if err != nil || !ok {
+		return zero, ok, err
+	}
+
+	// Захватили блокировку — выполняем fn()
+	res, err := fn()
+	if err != nil {
+		// Если прогрев больше не нужен (кто-то другой уже обновил кеш),
+		// просто отпускаем блокировку и не считаем это ошибкой для вызывающего кода.
+		if errors.Is(err, ErrWarmupNotNeeded) {
+			go g.backend.Unlock(ctx, lockKey, myUUID)
+			return zero, true, nil
+		}
+		// Не снимаем блокировку через Lua — она просто истечёт по TTL.
+		return zero, true, err
+	}
+
+	// Снимаем блокировку и сохраняем результат одной операцией.
+	if _, err := g.unlockAndSetResult(ctx, lockKey, resultKey, myUUID, res); err != nil {
+		return zero, true, err
+	}
+
+	return res, true, nil
+}
+
 // getResult пытается получить и распарсить результат из Backend.
 // Возвращает:
 //   - V: значение результата (валидно, только если found == true и err == nil),
@@ -192,50 +236,6 @@ func (g *Group[V]) getResultWithTTL(ctx context.Context, resultKey string) (V, b
 		return zero, false, 0, err
 	}
 	return res, true, ttl, nil
-}
-
-// computeAndStore захватывает блокировку для lockKey, вычисляет fn и,
-// если всё прошло успешно, сериализует и сохраняет результат в resultKey.
-// Возвращает:
-//   - V: вычисленное значение (валидно только при ok == true и err == nil),
-//   - bool: признак, удалось ли захватить блокировку,
-//   - error: ошибка при работе с Backend или в fn.
-func (g *Group[V]) computeAndStore(
-	ctx context.Context,
-	lockKey, resultKey string,
-	fn func() (V, error),
-) (V, bool, error) {
-	var zero V
-
-	myUUID, ok, err := g.lock(ctx, lockKey)
-	if err != nil || !ok {
-		return zero, ok, err
-	}
-
-	// Захватили блокировку — выполняем fn()
-	res, err := fn()
-	if err != nil {
-		// Если прогрев больше не нужен (кто-то другой уже обновил кеш),
-		// просто отпускаем блокировку и не считаем это ошибкой для вызывающего кода.
-		if errors.Is(err, ErrWarmupNotNeeded) {
-			go g.backend.Unlock(ctx, lockKey, myUUID)
-			return zero, true, nil
-		}
-		// Не снимаем блокировку через Lua — она просто истечёт по TTL.
-		return zero, true, err
-	}
-
-	// Сериализуем результат, снимаем блокировку и сохраняем результат.
-	if _, err := g.unlockAndSetResult(ctx, lockKey, resultKey, myUUID, res); err != nil {
-		return zero, true, err
-	}
-
-	return res, true, nil
-}
-
-// needWarmup возвращает true, если для данного остаточного TTL нужно запускать прогрев.
-func (g *Group[V]) needWarmup(ttl time.Duration) bool {
-	return g.warmupWindow > 0 && ttl > 0 && ttl < g.warmupWindow
 }
 
 // unlockAndSetResult сериализует результат, снимает блокировку и сохраняет результат в Backend.

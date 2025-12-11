@@ -49,6 +49,10 @@ func TestGroup_MultiProcess_UsesSingleComputation(t *testing.T) {
 			"--",
 		)
 
+		// Пробрасываем вывод helper-процесса в stderr теста, чтобы логи были видны при падении.
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+
 		// Наследуем окружение и добавляем маркеры/параметры для helper-процесса.
 		cmd.Env = append(
 			os.Environ(),
@@ -121,7 +125,7 @@ func runMultiProcessRecomputesOnResultTTL(t *testing.T, enableLocalDedup bool, w
 		resultTTL    = 200 * time.Millisecond
 		pollInterval = 10 * time.Millisecond
 
-		workers        = 4
+		workers        = 8
 		testDuration   = time.Second
 		expectedResult = int(testDuration / resultTTL)
 
@@ -174,6 +178,11 @@ func runMultiProcessRecomputesOnResultTTL(t *testing.T, enableLocalDedup bool, w
 			env = append(env, "GROUP_WARMUP_WINDOW="+warmupWindow.String())
 		}
 		cmd.Env = append(os.Environ(), env...)
+
+		// Пробрасываем вывод helper-процесса в stderr теста, чтобы логи были видны при падении.
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+
 		cmds = append(cmds, cmd)
 	}
 
@@ -331,8 +340,6 @@ func TestGroup_MultiProcess_Helper(t *testing.T) {
 			fmt.Fprintf(os.Stderr, "helper: Do failed: %v\n", err)
 			os.Exit(1)
 		}
-		if i+1 < count {
-			time.Sleep(interval)
-		}
+		time.Sleep(interval)
 	}
 }
