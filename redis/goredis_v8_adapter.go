@@ -31,8 +31,8 @@ func (v v8KVClient) SetNX(ctx context.Context, key, value string, ttl time.Durat
 	return v.c.SetNX(ctx, key, value, ttl).Result()
 }
 
-// TTL возвращает оставшийся TTL ключа. При отсутствии ключа или TTL возвращает 0, nil.
-func (v v8KVClient) TTL(ctx context.Context, key string) (time.Duration, error) {
+// GetTTL возвращает оставшийся TTL ключа. При отсутствии ключа или TTL возвращает 0, nil.
+func (v v8KVClient) GetTTL(ctx context.Context, key string) (time.Duration, error) {
 	d, err := v.c.PTTL(ctx, key).Result()
 	if err != nil {
 		return 0, err

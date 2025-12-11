@@ -60,8 +60,8 @@ func (v glideKVClient) SetNX(ctx context.Context, key, value string, ttl time.Du
 	return !result.IsNil(), nil
 }
 
-// TTL возвращает оставшийся TTL ключа. При отсутствии ключа или TTL возвращает 0, nil.
-func (v glideKVClient) TTL(ctx context.Context, key string) (time.Duration, error) {
+// GetTTL возвращает оставшийся TTL ключа. При отсутствии ключа или TTL возвращает 0, nil.
+func (v glideKVClient) GetTTL(ctx context.Context, key string) (time.Duration, error) {
 	// В GLIDE нет прямого метода PTTL в интерфейсе glideCommands, поэтому используем Lua-скрипт.
 	script := *options.NewScript("return redis.call('PTTL', KEYS[1])")
 

@@ -94,7 +94,7 @@ func (g *Group[V]) DoCtx(ctx context.Context, key string, fn func() (V, error)) 
 			// Попробуем явно отловить такой сценарий: если у результата в кеше обновился TTL,
 			// то прогрев не нужен, кидаем ошибку, fn не будет вызвана.
 			fnNoRace := func() (res V, err error) {
-				if ttl, _ := g.backend.TTL(ctx, resultKey); g.needWarmup(ttl) {
+				if ttl, _ := g.backend.GetTTL(ctx, resultKey); g.needWarmup(ttl) {
 					return fn()
 				}
 				return res, ErrWarmupNotNeeded

@@ -308,7 +308,7 @@ func TestBackends_TTL(t *testing.T) {
 			keyMissing := newBackendTestKey(t, "ttl:missing-backend-"+fx.name)
 			require.NoError(t, fx.del(ctx, keyMissing))
 
-			ttl, err := fx.backend.TTL(ctx, keyMissing)
+			ttl, err := fx.backend.GetTTL(ctx, keyMissing)
 			require.NoError(t, err)
 			require.Equal(t, time.Duration(0), ttl)
 
@@ -319,7 +319,7 @@ func TestBackends_TTL(t *testing.T) {
 			value := []byte("ttl-backend-value")
 			require.NoError(t, fx.backend.SetResult(ctx, keyWithTTL, value, time.Second))
 
-			ttl, err = fx.backend.TTL(ctx, keyWithTTL)
+			ttl, err = fx.backend.GetTTL(ctx, keyWithTTL)
 			require.NoError(t, err)
 			require.Greater(t, ttl, 990*time.Millisecond)
 			require.LessOrEqual(t, ttl, time.Second)
@@ -330,7 +330,7 @@ func TestBackends_TTL(t *testing.T) {
 
 			require.NoError(t, fx.setNoTTL(ctx, keyNoTTL, value))
 
-			ttl, err = fx.backend.TTL(ctx, keyNoTTL)
+			ttl, err = fx.backend.GetTTL(ctx, keyNoTTL)
 			require.NoError(t, err)
 			require.Equal(t, time.Duration(0), ttl)
 		})

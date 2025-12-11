@@ -22,9 +22,9 @@ type KVClient interface {
 	// SetNX пытается установить значение с TTL, если ключ не существует.
 	SetNX(ctx context.Context, key, value string, ttl time.Duration) (bool, error)
 
-	// TTL возвращает оставшийся TTL ключа.
+	// GetTTL возвращает оставшийся TTL ключа.
 	// Если ключ не существует или у него нет TTL, возвращает 0, nil.
-	TTL(ctx context.Context, key string) (time.Duration, error)
+	GetTTL(ctx context.Context, key string) (time.Duration, error)
 }
 
 // LuaScript — минимальный интерфейс для Lua-скрипта.
@@ -194,8 +194,8 @@ func (b *redisBackend) UnlockAndSetResult(
 	return n > 0, nil
 }
 
-// TTL возвращает оставшийся TTL произвольного ключа через KVClient.
+// GetTTL возвращает оставшийся TTL произвольного ключа через KVClient.
 // Если ключ не существует или у него нет TTL, возвращает 0, nil.
-func (b *redisBackend) TTL(ctx context.Context, key string) (time.Duration, error) {
-	return b.kv.TTL(ctx, key)
+func (b *redisBackend) GetTTL(ctx context.Context, key string) (time.Duration, error) {
+	return b.kv.GetTTL(ctx, key)
 }
