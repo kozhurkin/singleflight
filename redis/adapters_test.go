@@ -297,3 +297,43 @@ func TestBackends_GetResultWithTTL(t *testing.T) {
 		})
 	}
 }
+
+func TestBackends_TTL(t *testing.T) {
+	ctx := context.Background()
+
+	for _, fx := range redisBackends(t) {
+		fx := fx
+		t.Run(fx.name, func(t *testing.T) {
+			// Ключ, которого нет.
+			keyMissing := newBackendTestKey(t, "ttl:missing-backend-"+fx.name)
+			require.NoError(t, fx.del(ctx, keyMissing))
+
+			ttl, err := fx.backend.TTL(ctx, keyMissing)
+			require.NoError(t, err)
+			require.Equal(t, time.Duration(0), ttl)
+
+			// Ключ с TTL.
+			keyWithTTL := newBackendTestKey(t, "ttl:with-backend-"+fx.name)
+			require.NoError(t, fx.del(ctx, keyWithTTL))
+
+			value := []byte("ttl-backend-value")
+			require.NoError(t, fx.backend.SetResult(ctx, keyWithTTL, value, time.Second))
+
+			ttl, err = fx.backend.TTL(ctx, keyWithTTL)
+			fmt.Println("ttl", ttl, err)
+			require.NoError(t, err)
+			require.Greater(t, ttl, 990*time.Millisecond)
+			require.LessOrEqual(t, ttl, time.Second)
+
+			// Ключ без TTL.
+			keyNoTTL := newBackendTestKey(t, "ttl:none-backend-"+fx.name)
+			require.NoError(t, fx.del(ctx, keyNoTTL))
+
+			require.NoError(t, fx.setNoTTL(ctx, keyNoTTL, value))
+
+			ttl, err = fx.backend.TTL(ctx, keyNoTTL)
+			require.NoError(t, err)
+			require.Equal(t, time.Duration(0), ttl)
+		})
+	}
+}

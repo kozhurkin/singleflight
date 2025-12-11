@@ -83,22 +83,39 @@ func (g *Group[V]) DoCtx(ctx context.Context, key string, fn func() (V, error)) 
 		return zero, err
 	} else if found {
 		// Если прогрев включен и TTL меньше окна прогрева, запускаем асинхронный прогрев.
-		if g.warmupWindow > 0 && ttl < g.warmupWindow {
-			// Запускаем асинхронный прогрев значения.
-			go g.underLock(ctx, lockKey, func(lockValue string) bool {
-				res, err := fn()
-				if err == nil {
-					g.setResult(ctx, resultKey, res)
+		if g.needWarmup(ttl) {
+			// Функция-обёртка для избежания DATA RACE.
+			// Между тем, как мы посмотрели кеш через getResultWithTTL и запуском computeAndStore,
+			// другой процесс теоретически уже мог успеть записать результат с новым TTL.
+			// Попробуем явно отловить такой сценарий: если у результата в кеше обновился TTL,
+			// то прогрев не нужен, кидаем ошибку, fn не будет вызвана.
+			fnNoRace := func() (res V, err error) {
+				if ttl, _ := g.backend.TTL(ctx, resultKey); g.needWarmup(ttl) {
+					return fn()
 				}
-				return true
-			})
+				return res, errors.New("warmup not needed")
+			}
+			// Запускаем асинхронный прогрев значения.
+			go g.computeAndStore(ctx, lockKey, resultKey, fnNoRace)
 			return res, nil
 		}
 		return res, nil
 	}
 
+	// Функция-обёртка для избежания DATA RACE.
+	// Между тем, как мы посмотрели кеш через getResultWithTTL и дошли до этого места,
+	// другой процесс теоретически уже мог успеть записать результат.
+	// Попробуем явно отловить такой сценарий: если сейчас результат уже есть в кеше,
+	// возвращаем результат без повторного вычисления.
+	fnNoRace := func() (V, error) {
+		if res, found, _ := g.getResult(ctx, resultKey); found {
+			return res, nil
+		}
+		return fn()
+	}
+
 	// Результат в кеше отсутствует — пробуем вычислить его под блокировкой.
-	if res, ok, err := g.computeAndStore(ctx, lockKey, resultKey, fn); err != nil {
+	if res, ok, err := g.computeAndStore(ctx, lockKey, resultKey, fnNoRace); err != nil {
 		return zero, err
 	} else if ok {
 		return res, nil
@@ -191,16 +208,6 @@ func (g *Group[V]) computeAndStore(
 		return zero, ok, err
 	}
 
-	// DATA RACE detection:
-	// Между тем, как мы посмотрели кеш через getResultWithTTL и дошли до этого места,
-	// другой процесс теоретически уже мог успеть записать результат.
-	// Попробуем явно отловить такой сценарий: если сейчас результат уже есть в кеше,
-	// снимаем блокировку и возвращаем результат без повторного вычисления.
-	if res, found, err := g.getResult(ctx, resultKey); err == nil && found {
-		go g.backend.Unlock(ctx, lockKey, myUUID)
-		return res, true, nil
-	}
-
 	// Захватили блокировку — выполняем fn()
 	res, err := fn()
 	if err != nil {
@@ -214,6 +221,11 @@ func (g *Group[V]) computeAndStore(
 	}
 
 	return res, true, nil
+}
+
+// needWarmup возвращает true, если для данного остаточного TTL нужно запускать прогрев.
+func (g *Group[V]) needWarmup(ttl time.Duration) bool {
+	return g.warmupWindow > 0 && ttl > 0 && ttl < g.warmupWindow
 }
 
 // setResult сериализует результат и сохраняет его в Backend с TTL результата.

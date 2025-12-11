@@ -309,7 +309,7 @@ func TestGroup_MultiProcess_Helper(t *testing.T) {
 	fn := func() (int, error) {
 		// Пишем таймстемп реального запуска в список.
 		item := strings.Join([]string{
-			time.Now().Format(time.RFC3339Nano),
+			time.Now().UTC().Format("2006-01-02 15:04:05.000"),
 			timestampsKey,
 			fmt.Sprintf("pid:%d", os.Getpid()),
 		}, "|")

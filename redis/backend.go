@@ -43,6 +43,8 @@ type Backend interface {
 		data []byte,
 		ttl time.Duration,
 	) (bool, error)
+
+	// TTL возвращает оставшийся TTL произвольного ключа.
+	// Если ключ не существует или у него нет TTL, возвращает 0, nil.
+	TTL(ctx context.Context, key string) (time.Duration, error)
 }
-
-

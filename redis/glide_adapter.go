@@ -2,6 +2,7 @@ package redisflight
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/valkey-io/valkey-glide/go/v2/constants"
@@ -57,6 +58,29 @@ func (v glideKVClient) SetNX(ctx context.Context, key, value string, ttl time.Du
 		return false, err
 	}
 	return !result.IsNil(), nil
+}
+
+// TTL возвращает оставшийся TTL ключа. При отсутствии ключа или TTL возвращает 0, nil.
+func (v glideKVClient) TTL(ctx context.Context, key string) (time.Duration, error) {
+	// В GLIDE нет прямого метода PTTL в интерфейсе glideCommands, поэтому используем Lua-скрипт.
+	script := *options.NewScript("return redis.call('PTTL', KEYS[1])")
+
+	res, err := v.c.InvokeScriptWithOptions(ctx, script, options.ScriptOptions{
+		Keys: []string{key},
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	ttlMs, ok := res.(int64)
+	if !ok {
+		return 0, fmt.Errorf("glide TTL: unexpected result type %T", res)
+	}
+
+	if ttlMs <= 0 {
+		return 0, nil
+	}
+	return time.Duration(ttlMs) * time.Millisecond, nil
 }
 
 // glideLuaScript реализует LuaScript поверх Valkey GLIDE с помощью InvokeScriptWithOptions.

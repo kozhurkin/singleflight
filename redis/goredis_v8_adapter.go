@@ -31,6 +31,19 @@ func (v v8KVClient) SetNX(ctx context.Context, key, value string, ttl time.Durat
 	return v.c.SetNX(ctx, key, value, ttl).Result()
 }
 
+// TTL возвращает оставшийся TTL ключа. При отсутствии ключа или TTL возвращает 0, nil.
+func (v v8KVClient) TTL(ctx context.Context, key string) (time.Duration, error) {
+	d, err := v.c.PTTL(ctx, key).Result()
+	if err != nil {
+		return 0, err
+	}
+	// В go-redis PTTL для несуществующего ключа или ключа без TTL возвращает отрицательное значение.
+	if d <= 0 {
+		return 0, nil
+	}
+	return d, nil
+}
+
 // v8LuaScript реализует LuaScript поверх *redisv8.Script.
 type v8LuaScript struct {
 	c *redisv8.Client
@@ -55,9 +68,9 @@ func NewGoRedisV8Backend(c *redisv8.Client) Backend {
 	return &redisBackend{
 		kv: kv,
 		scripts: scripts{
-			getWithTTL:         v8LuaScript{c: c, s: redisv8.NewScript(luaGetWithTTLSource)},
-			unlock:             v8LuaScript{c: c, s: redisv8.NewScript(luaUnlockSource)},
-			unlockAndSet:       v8LuaScript{c: c, s: redisv8.NewScript(luaUnlockAndSetSource)},
+			getWithTTL:   v8LuaScript{c: c, s: redisv8.NewScript(luaGetWithTTLSource)},
+			unlock:       v8LuaScript{c: c, s: redisv8.NewScript(luaUnlockSource)},
+			unlockAndSet: v8LuaScript{c: c, s: redisv8.NewScript(luaUnlockAndSetSource)},
 		},
 	}
 }
