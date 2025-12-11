@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/kozhurkin/singleflight"
 	"github.com/google/uuid"
+	"github.com/kozhurkin/singleflight"
 )
 
 // Group реализует распределённый singleflight поверх абстрактного Backend.
@@ -120,7 +120,6 @@ func (g *Group[V]) DoCtx(ctx context.Context, key string, fn func() (V, error)) 
 	}
 }
 
-
 // getResult пытается получить и распарсить результат из Backend.
 // Возвращает:
 //   - V: значение результата (валидно, только если found == true и err == nil),
@@ -224,33 +223,6 @@ func (g *Group[V]) unlockAndSetResult(ctx context.Context, lockKey, resultKey, l
 	}
 
 	return ok, nil
-}
-
-// unlock пытается снять блокировку, только если она всё ещё принадлежит указанному значению lockValue.
-// Делегирует работу Backend'у, чтобы сравнение значения и удаление ключа были атомарными.
-// Возвращает:
-//   - bool: признак, была ли реально снята блокировка,
-//   - error: ошибка при обращении к Redis.
-func (g *Group[V]) unlock(ctx context.Context, lockKey, lockValue string) (bool, error) {
-	ok, err := g.backend.Unlock(ctx, lockKey, lockValue)
-	if err != nil {
-		return false, &BackendError{Op: "Unlock", Err: err}
-	}
-	return ok, nil
-}
-
-// setResult сериализует результат и сохраняет его в Backend с TTL результата.
-// Этот метод не взаимодействует с блокировкой.
-func (g *Group[V]) setResult(ctx context.Context, resultKey string, res V) error {
-	data, err := json.Marshal(res)
-	if err != nil {
-		return err
-	}
-
-	if err := g.backend.SetResult(ctx, resultKey, data, g.resultTTL+g.warmupWindow); err != nil {
-		return &BackendError{Op: "SetResult", Err: err}
-	}
-	return nil
 }
 
 // lock генерирует значение блокировки и пытается установить её через Backend.
