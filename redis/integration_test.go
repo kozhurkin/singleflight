@@ -98,6 +98,18 @@ func TestGroup_MultiProcess_UsesSingleComputation(t *testing.T) {
 // и тому же ключу. При resultTTL=100ms мы ожидаем, что реальное вычисление fn (INCR
 // счётчика в Redis) произойдёт примерно 10 раз — по одному разу на каждый интервал TTL.
 func TestGroup_MultiProcess_RecomputesOnResultTTL(t *testing.T) {
+	runMultiProcessRecomputesOnResultTTL(t, false)
+}
+
+// TestGroup_MultiProcess_RecomputesOnResultTTL_WithLocalDeduplication делает то же самое,
+// что и TestGroup_MultiProcess_RecomputesOnResultTTL, но с включённой локальной дедупликацией
+// (WithLocalDeduplication). Ожидаемый результат не должен меняться.
+func TestGroup_MultiProcess_RecomputesOnResultTTL_WithLocalDeduplication(t *testing.T) {
+	runMultiProcessRecomputesOnResultTTL(t, true)
+}
+
+// runMultiProcessRecomputesOnResultTTL содержит общую логику для интеграционных тестов выше.
+func runMultiProcessRecomputesOnResultTTL(t *testing.T, enableLocalDedup bool) {
 	const (
 		lockTTL      = 50 * time.Millisecond
 		resultTTL    = 200 * time.Millisecond
@@ -147,10 +159,10 @@ func TestGroup_MultiProcess_RecomputesOnResultTTL(t *testing.T) {
 			"CLIENT_COUNT=" + fmt.Sprintf("%d", count),
 			"CLIENT_INTERVAL=" + interval.String(),
 		}
-		cmd.Env = append(
-			os.Environ(),
-			env...,
-		)
+		if enableLocalDedup {
+			env = append(env, "GROUP_LOCAL_DEDUP=true")
+		}
+		cmd.Env = append(os.Environ(), env...)
 		cmds = append(cmds, cmd)
 	}
 
@@ -192,6 +204,7 @@ func TestGroup_MultiProcess_RecomputesOnResultTTL(t *testing.T) {
 //   - GROUP_LOCK_TTL      — TTL блокировки;
 //   - GROUP_RESULT_TTL    — TTL результата;
 //   - GROUP_POLL_INTERVAL — интервал опроса результата конкурентами;
+//   - GROUP_LOCAL_DEDUP   — если непустой, включает локальную дедупликацию (WithLocalDeduplication);
 //   - CLIENT_COUNT        — сколько раз вызвать Do;
 //   - CLIENT_INTERVAL     — пауза между вызовами (Go duration, например "0s", "110ms").
 func TestGroup_MultiProcess_Helper(t *testing.T) {
@@ -239,6 +252,7 @@ func TestGroup_MultiProcess_Helper(t *testing.T) {
 		fmt.Fprintf(os.Stderr, "helper: invalid GROUP_POLL_INTERVAL: %v\n", err)
 		os.Exit(2)
 	}
+	enableLocalDedup := os.Getenv("GROUP_LOCAL_DEDUP") != ""
 
 	client := goredis.NewClient(&goredis.Options{
 		Addr: redisAddr(),
@@ -252,7 +266,12 @@ func TestGroup_MultiProcess_Helper(t *testing.T) {
 
 	backend := NewGoRedisV9Backend(client)
 
-	g := NewGroup[int](backend, lockTTL, resultTTL, pollInterval)
+	opts := []Option[int]{}
+	if enableLocalDedup {
+		opts = append(opts, WithLocalDeduplication[int](true))
+	}
+
+	g := NewGroup(backend, lockTTL, resultTTL, pollInterval, opts...)
 
 	fn := func() (int, error) {
 		// Пишем таймстемп реального запуска в список.
