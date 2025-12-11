@@ -91,6 +91,8 @@ func (g *Group[V]) DoCtx(ctx context.Context, key string, fn func() (V, error)) 
 		return res, nil
 	}
 
+	// DATA RACE
+
 	// Результат в кеше отсутствует — пробуем вычислить его под блокировкой.
 	if res, ok, err := g.computeAndStore(ctx, lockKey, resultKey, fn); err != nil {
 		return zero, err

@@ -125,7 +125,7 @@ func runMultiProcessRecomputesOnResultTTL(t *testing.T, enableLocalDedup bool, w
 		testDuration   = time.Second
 		expectedResult = int(testDuration / resultTTL)
 
-		interval = 50 * time.Millisecond
+		interval = 25 * time.Millisecond
 		count    = testDuration / interval
 	)
 
@@ -177,7 +177,6 @@ func runMultiProcessRecomputesOnResultTTL(t *testing.T, enableLocalDedup bool, w
 
 	// Стартуем все процессы
 	for _, cmd := range cmds {
-		fmt.Println("starting worker", time.Now().Format(time.RFC3339Nano))
 		if err := cmd.Start(); err != nil {
 			t.Fatalf("failed to start worker: %v", err)
 		}
@@ -188,7 +187,6 @@ func runMultiProcessRecomputesOnResultTTL(t *testing.T, enableLocalDedup bool, w
 		if err := cmd.Wait(); err != nil {
 			t.Fatalf("worker exited with error: %v", err)
 		}
-		fmt.Println("waiting for worker", time.Now().Format(time.RFC3339Nano))
 	}
 
 	// Проверяем, сколько раз реально вызывался fn по длине списка таймстемпов.
@@ -296,11 +294,16 @@ func TestGroup_MultiProcess_Helper(t *testing.T) {
 
 	fn := func() (int, error) {
 		// Пишем таймстемп реального запуска в список.
-		now := time.Now().Format(time.RFC3339Nano)
-		if err := client.RPush(ctx, timestampsKey, now).Err(); err != nil {
+		item := strings.Join([]string{
+			time.Now().Format(time.RFC3339Nano),
+			timestampsKey,
+			fmt.Sprintf("pid:%d", os.Getpid()),
+		}, "|")
+		if err := client.RPush(ctx, timestampsKey, item).Err(); err != nil {
 			return 0, err
 		}
 		// Значение не важно для тестов, возвращаем фиктивное.
+		time.Sleep(5 * time.Millisecond)
 		return 0, nil
 	}
 
