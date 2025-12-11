@@ -30,6 +30,10 @@ var (
 	ErrInvalidResultTTL = errors.New("redisflight: resultTTL must be >= 1ms")
 	// ErrResultTTLNotGreaterThanPollInterval означает, что resultTTL <= pollInterval.
 	ErrResultTTLNotGreaterThanPollInterval = errors.New("redisflight: resultTTL must be > pollInterval")
+	// ErrWarmupNotNeeded — внутренний маркер, что прогрев больше не требуется.
+	ErrWarmupNotNeeded = errors.New("redisflight: warmup not needed")
+	// ErrTimeoutWaitingForResult означает, что ждём результат слишком долго.
+	ErrTimeoutWaitingForResult = errors.New("redisflight: timeout waiting for result")
 )
 
 // NewGroup создаёт Group поверх указанного Backend с заданными базовыми параметрами.
@@ -93,7 +97,7 @@ func (g *Group[V]) DoCtx(ctx context.Context, key string, fn func() (V, error)) 
 				if ttl, _ := g.backend.TTL(ctx, resultKey); g.needWarmup(ttl) {
 					return fn()
 				}
-				return res, errors.New("warmup not needed")
+				return res, ErrWarmupNotNeeded
 			}
 			// Запускаем асинхронный прогрев значения.
 			go g.computeAndStore(ctx, lockKey, resultKey, fnNoRace)
@@ -138,7 +142,7 @@ func (g *Group[V]) DoCtx(ctx context.Context, key string, fn func() (V, error)) 
 				return res, nil
 			}
 		case <-timeout:
-			return zero, errors.New("timeout waiting for result")
+			return zero, ErrTimeoutWaitingForResult
 		}
 	}
 }
@@ -211,6 +215,12 @@ func (g *Group[V]) computeAndStore(
 	// Захватили блокировку — выполняем fn()
 	res, err := fn()
 	if err != nil {
+		// Если прогрев больше не нужен (кто-то другой уже обновил кеш),
+		// просто отпускаем блокировку и не считаем это ошибкой для вызывающего кода.
+		if errors.Is(err, ErrWarmupNotNeeded) {
+			go g.backend.Unlock(ctx, lockKey, myUUID)
+			return zero, true, nil
+		}
 		// Не снимаем блокировку через Lua — она просто истечёт по TTL.
 		return zero, true, err
 	}
@@ -226,46 +236,6 @@ func (g *Group[V]) computeAndStore(
 // needWarmup возвращает true, если для данного остаточного TTL нужно запускать прогрев.
 func (g *Group[V]) needWarmup(ttl time.Duration) bool {
 	return g.warmupWindow > 0 && ttl > 0 && ttl < g.warmupWindow
-}
-
-// setResult сериализует результат и сохраняет его в Backend с TTL результата.
-func (g *Group[V]) setResult(ctx context.Context, resultKey string, res V) error {
-	data, err := json.Marshal(res)
-	if err != nil {
-		return err
-	}
-
-	if err := g.backend.SetResult(ctx, resultKey, data, g.resultTTL+g.warmupWindow); err != nil {
-		return &BackendError{Op: "SetResult", Err: err}
-	}
-	return nil
-}
-
-// underLock пробует захватить блокировку по lockKey и, если это удалось,
-// вызывает body(lockValue). Если body вернуло true, блокировка будет снята
-// через Backend.Unlock, иначе останется до TTL или явного удаления.
-// Возвращаемые значения:
-//   - bool  — удалось ли захватить блокировку;
-//   - error — ошибка при захвате блокировки или при снятии.
-func (g *Group[V]) underLock(
-	ctx context.Context,
-	lockKey string,
-	body func(lockValue string) bool,
-) (bool, error) {
-	lockValue, ok, err := g.lock(ctx, lockKey)
-	if err != nil || !ok {
-		return ok, err
-	}
-
-	shouldUnlock := body(lockValue)
-
-	if shouldUnlock {
-		if _, err := g.backend.Unlock(ctx, lockKey, lockValue); err != nil {
-			return true, &BackendError{Op: "Unlock", Err: err}
-		}
-	}
-
-	return true, nil
 }
 
 // unlockAndSetResult сериализует результат, снимает блокировку и сохраняет результат в Backend.

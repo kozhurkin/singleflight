@@ -320,7 +320,6 @@ func TestBackends_TTL(t *testing.T) {
 			require.NoError(t, fx.backend.SetResult(ctx, keyWithTTL, value, time.Second))
 
 			ttl, err = fx.backend.TTL(ctx, keyWithTTL)
-			fmt.Println("ttl", ttl, err)
 			require.NoError(t, err)
 			require.Greater(t, ttl, 990*time.Millisecond)
 			require.LessOrEqual(t, ttl, time.Second)
