@@ -92,7 +92,6 @@ func (g *Group[V]) DoCtx(ctx context.Context, key string, fn func() (V, error)) 
 				}
 				return true
 			})
-			go g.computeAndStore(ctx, lockKey, resultKey, fn)
 			return res, nil
 		}
 		return res, nil
