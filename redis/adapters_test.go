@@ -3,7 +3,7 @@ package redisflight
 import (
 	"context"
 	"fmt"
-	"github.com/valkey-io/valkey-glide/go/v2/config"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -13,11 +13,21 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 	glide "github.com/valkey-io/valkey-glide/go/v2"
+	"github.com/valkey-io/valkey-glide/go/v2/config"
 )
 
 func newBackendTestKey(t *testing.T, prefix string) string {
 	t.Helper()
 	return fmt.Sprintf("sf:test:%s:%d", prefix, time.Now().UnixNano())
+}
+
+// redisAddr возвращает адрес Redis для тестов.
+// Можно переопределить через переменную окружения REDIS_ADDR.
+func redisAddr() string {
+	if v := os.Getenv("REDIS_ADDR"); v != "" {
+		return v
+	}
+	return "127.0.0.1:6379"
 }
 
 // newTestRedisClientV9 создаёт клиента Redis v9 и скипает тест, если Redis недоступен.
