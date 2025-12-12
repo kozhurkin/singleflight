@@ -11,6 +11,7 @@ import (
 	"time"
 
 	goredis "github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/require"
 )
 
 // TestGroup_MultiProcess_UsesSingleComputation запускает несколько процессов,
@@ -34,9 +35,8 @@ func TestGroup_MultiProcess_UsesSingleComputation(t *testing.T) {
 	timestampsKey := "timestamps:" + testID
 
 	// На всякий случай очищаем счётчик
-	if err := client.Del(ctx, timestampsKey).Err(); err != nil {
-		t.Fatalf("failed to delete timestamps key: %v", err)
-	}
+	err := client.Del(ctx, timestampsKey).Err()
+	require.NoError(t, err, "failed to delete timestamps key")
 
 	var cmds []*exec.Cmd
 
@@ -76,29 +76,24 @@ func TestGroup_MultiProcess_UsesSingleComputation(t *testing.T) {
 
 	// Стартуем все процессы
 	for _, cmd := range cmds {
-		if err := cmd.Start(); err != nil {
-			t.Fatalf("failed to start worker: %v", err)
-		}
+		err := cmd.Start()
+		require.NoError(t, err, "failed to start worker")
 	}
 
 	// Ждём всех
 	for _, cmd := range cmds {
-		if err := cmd.Wait(); err != nil {
-			t.Fatalf("worker exited with error: %v", err)
-		}
+		err := cmd.Wait()
+		require.NoError(t, err, "worker exited with error")
 	}
 
 	// Проверяем, сколько раз реально вызывался fn по длине списка таймстемпов.
 	timestamps, err := client.LRange(ctx, timestampsKey, 0, -1).Result()
-	if err != nil {
-		t.Fatalf("failed to get timestamps: %v", err)
-	}
+	require.NoError(t, err, "failed to get timestamps")
 
 	t.Logf("single-computation timestamps: %v", timestamps)
 
-	if len(timestamps) != 1 {
-		t.Fatalf("expected fn to be executed exactly once across processes, got %d", len(timestamps))
-	}
+	require.Equal(t, 1, len(timestamps),
+		"expected fn to be executed exactly once across processes, got %d", len(timestamps))
 }
 
 // TestGroup_MultiProcess_RecomputesOnResultTTL запускает несколько процессов,
@@ -146,9 +141,8 @@ func runMultiProcessRecomputesOnResultTTL(t *testing.T, enableLocalDedup bool, w
 	timestampsKey := "timestamps:" + testID
 
 	// На всякий случай очищаем счётчик
-	if err := client.Del(ctx, timestampsKey).Err(); err != nil {
-		t.Fatalf("failed to delete timestamps key: %v", err)
-	}
+	err := client.Del(ctx, timestampsKey).Err()
+	require.NoError(t, err, "failed to delete timestamps key")
 
 	var cmds []*exec.Cmd
 
@@ -192,29 +186,24 @@ func runMultiProcessRecomputesOnResultTTL(t *testing.T, enableLocalDedup bool, w
 
 	// Стартуем все процессы
 	for _, cmd := range cmds {
-		if err := cmd.Start(); err != nil {
-			t.Fatalf("failed to start worker: %v", err)
-		}
+		err := cmd.Start()
+		require.NoError(t, err, "failed to start worker")
 	}
 
 	// Ждём всех
 	for _, cmd := range cmds {
-		if err := cmd.Wait(); err != nil {
-			t.Fatalf("worker exited with error: %v", err)
-		}
+		err := cmd.Wait()
+		require.NoError(t, err, "worker exited with error")
 	}
 
 	// Проверяем, сколько раз реально вызывался fn по длине списка таймстемпов.
 	timestamps, err := client.LRange(ctx, timestampsKey, 0, -1).Result()
-	if err != nil {
-		t.Fatalf("failed to get timestamps: %v", err)
-	}
+	require.NoError(t, err, "failed to get timestamps")
 
 	t.Logf("timestamps:\n%v+", strings.Join(timestamps, "\n"))
 
-	if len(timestamps) != expectedResult {
-		t.Fatalf("expected fn to be executed %d times across processes, got %d", expectedResult, len(timestamps))
-	}
+	require.Equal(t, expectedResult, len(timestamps),
+		"expected fn to be executed %d times across processes, got %d", expectedResult, len(timestamps))
 }
 
 // TestGroup_MultiProcess_Helper — helper-тест, который реально выполняется
