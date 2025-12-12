@@ -120,7 +120,7 @@ func (g *Group[K, V]) cacheFinalizerForKey(key K) func(res V, err error) {
 			// Помечаем ключ как ожидающий прогрева
 			g.markWarmupPending(key)
 
-			// Ожидаем время прогрева и применяем результат, если прогрев случился
+			// Ожидаем время прогрева
 			time.Sleep(g.warmupWindow)
 
 			// Если прогрев так и не стартовал — очищаем pending-состояние и удаляем ключ из кеша
