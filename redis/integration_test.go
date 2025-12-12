@@ -20,8 +20,8 @@ func TestGroup_MultiProcess_UsesSingleComputation(t *testing.T) {
 	const (
 		workers = 8
 
-		lockTTL      = 2 * time.Second
-		resultTTL    = 5 * time.Second
+		lockTTL      = 1 * time.Second
+		resultTTL    = 2 * time.Second
 		pollInterval = 50 * time.Millisecond
 	)
 
@@ -51,19 +51,24 @@ func TestGroup_MultiProcess_UsesSingleComputation(t *testing.T) {
 
 		// Пробрасываем вывод helper-процесса в stderr теста, чтобы логи были видны при падении.
 		cmd.Stderr = os.Stderr
+		// cmd.Stdout = os.Stdout
+
+		env := []string{
+			"GO_WANT_HELPER_PROCESS=1",
+			"REDIS_ADDR=" + redisAddr(),
+			"KEY_DO=" + key,
+			"KEY_HITS=" + timestampsKey,
+			"GROUP_LOCK_TTL=" + lockTTL.String(),
+			"GROUP_RESULT_TTL=" + resultTTL.String(),
+			"GROUP_POLL_INTERVAL=" + pollInterval.String(),
+			"CLIENT_COUNT=1",
+			"CLIENT_INTERVAL=10ms",
+		}
 
 		// Наследуем окружение и добавляем маркеры/параметры для helper-процесса.
 		cmd.Env = append(
 			os.Environ(),
-			"GO_WANT_HELPER_PROCESS=1",
-			"REDIS_ADDR="+redisAddr(),
-			"KEY_DO="+key,
-			"KEY_HITS="+timestampsKey,
-			"GROUP_LOCK_TTL="+lockTTL.String(),
-			"GROUP_RESULT_TTL="+resultTTL.String(),
-			"GROUP_POLL_INTERVAL="+pollInterval.String(),
-			"CLIENT_COUNT=1",
-			"CLIENT_INTERVAL=0s",
+			env...,
 		)
 
 		cmds = append(cmds, cmd)
@@ -180,6 +185,7 @@ func runMultiProcessRecomputesOnResultTTL(t *testing.T, enableLocalDedup bool, w
 
 		// Пробрасываем вывод helper-процесса в stderr теста, чтобы логи были видны при падении.
 		cmd.Stderr = os.Stderr
+		// cmd.Stdout = os.Stdout
 
 		cmds = append(cmds, cmd)
 	}

@@ -88,7 +88,7 @@ func (g *Group[V]) DoCtx(ctx context.Context, key string, fn func() (V, error)) 
 	} else if found {
 		// Если прогрев включен и TTL меньше окна прогрева, запускаем асинхронный прогрев.
 		if g.needWarmup(ttl) {
-			// Функция-обёртка для избежания DATA RACE.
+			// Функция-обёртка для избежания RACE condition.
 			// Между тем, как мы посмотрели кеш через getResultWithTTL и запуском computeAndStore,
 			// другой процесс теоретически уже мог успеть записать результат с новым TTL.
 			// Попробуем явно отловить такой сценарий: если у результата в кеше обновился TTL,
@@ -106,20 +106,21 @@ func (g *Group[V]) DoCtx(ctx context.Context, key string, fn func() (V, error)) 
 		return res, nil
 	}
 
-	// Функция-обёртка для избежания DATA RACE.
+	// Функция-обёртка для избежания RACE condition.
 	// Между тем, как мы посмотрели кеш через getResultWithTTL и дошли до этого места,
 	// другой процесс теоретически уже мог успеть записать результат.
 	// Попробуем явно отловить такой сценарий: если сейчас результат уже есть в кеше,
 	// возвращаем результат без повторного вычисления.
 	fnNoRace := func() (V, error) {
 		if res, found, _ := g.getResult(ctx, resultKey); found {
-			return res, nil
+			return res, ErrWarmupNotNeeded
 		}
 		return fn()
 	}
 
 	// Результат в кеше отсутствует — пробуем вычислить его под блокировкой.
-	if res, ok, err := g.computeAndStore(ctx, lockKey, resultKey, fnNoRace); err != nil {
+	res, ok, err := g.computeAndStore(ctx, lockKey, resultKey, fnNoRace)
+	if err != nil {
 		return zero, err
 	} else if ok {
 		return res, nil
@@ -177,7 +178,7 @@ func (g *Group[V]) computeAndStore(
 		// просто отпускаем блокировку и не считаем это ошибкой для вызывающего кода.
 		if errors.Is(err, ErrWarmupNotNeeded) {
 			go g.backend.Unlock(ctx, lockKey, myUUID)
-			return zero, true, nil
+			return res, true, nil
 		}
 		// Не снимаем блокировку через Lua — она просто истечёт по TTL.
 		return zero, true, err
