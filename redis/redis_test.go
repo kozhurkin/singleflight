@@ -316,7 +316,7 @@ func TestGroup_WarmupWindow_BackgroundRecompute(t *testing.T) {
 		warmupWindow = 500 * time.Millisecond
 	)
 
-	g := NewGroup[int](
+	g := NewGroup(
 		backend,
 		lockTTL,
 		resultTTL,
@@ -391,30 +391,35 @@ func TestGroup_TimeoutWaitingForResult(t *testing.T) {
 	backend := NewGoRedisV9Backend(client)
 
 	key := newBackendTestKey(t, "group:timeout-waiting")
-	ctx := context.Background()
-
-	// Захватываем блокировку "вручную" с большим TTL, чтобы она не истекла раньше,
-	// чем время ожидания внутри DoCtx.
-	lockKey := "lock:" + key
-	ok, err := backend.TryLock(ctx, lockKey, "stuck-owner", 5*time.Second)
-	if err != nil {
-		t.Fatalf("failed to pre-lock key: %v", err)
-	}
-	if !ok {
-		t.Fatalf("expected to acquire pre-lock, but lock was already held")
-	}
-
 	g := NewGroup[int](backend, lockTTL, resultTTL, pollInterval)
 
+	// Сначала выполняем Do с функцией, которая возвращает ошибку.
+	// В этом случае computeAndStore не снимает блокировку и не пишет результат в кеше —
+	// блокировка "зависает" до истечения lockTTL.
+	var firstCalls int32
+	firstFn := func() (int, error) {
+		atomic.AddInt32(&firstCalls, 1)
+		return 0, fmt.Errorf("intentional failure to keep lock without result")
+	}
+
+	if _, err := g.Do(key, firstFn); err == nil {
+		t.Fatalf("first Do returned nil error, want non-nil")
+	}
+	if got := atomic.LoadInt32(&firstCalls); got != 1 {
+		t.Fatalf("first fn was called %d times, want 1", got)
+	}
+
+	// Теперь выполняем Do ещё раз: блокировка уже захвачена "зависшим" владельцем,
+	// а результат в кеше так и не появился. Мы должны получить ErrTimeoutWaitingForResult,
+	// при этом fn не должен вызываться.
 	var calls int32
 	fn := func() (int, error) {
-		// В этом сценарии fn не должен вызываться, так как мы никогда не получим лок.
 		atomic.AddInt32(&calls, 1)
 		return 0, fmt.Errorf("fn should not be called when lock is held by another owner")
 	}
 
 	start := time.Now()
-	_, err = g.Do(key, fn)
+	_, err := g.Do(key, fn)
 	elapsed := time.Since(start)
 
 	if err != ErrTimeoutWaitingForResult {
