@@ -1,6 +1,7 @@
 package redisflight
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -194,5 +195,184 @@ func TestGroup_LockTTL_ErrorThenRecoveryWakesWaiters(t *testing.T) {
 	}
 	if successCount != waiters-1 {
 		t.Fatalf("expected %d successful waiters, got %d", waiters-1, successCount)
+	}
+}
+
+// countingBackend оборачивает Backend и считает количество вызовов GetResultWithTTL.
+type countingBackend struct {
+	Backend
+
+	mu              sync.Mutex
+	getWithTTLCalls int
+}
+
+func (c *countingBackend) GetResultWithTTL(ctx context.Context, resultKey string) ([]byte, bool, time.Duration, error) {
+	c.mu.Lock()
+	c.getWithTTLCalls++
+	c.mu.Unlock()
+	return c.Backend.GetResultWithTTL(ctx, resultKey)
+}
+
+// TestGroup_LocalDeduplication_ReducesBackendCalls проверяет, что локальная дедупликация
+// снижает количество обращений к Backend (GetResultWithTTL) при множественных конкурентных Do.
+func TestGroup_LocalDeduplication_ReducesBackendCalls(t *testing.T) {
+	const (
+		lockTTL      = 500 * time.Millisecond
+		resultTTL    = 2 * time.Second
+		pollInterval = 50 * time.Millisecond
+		workers      = 8
+	)
+
+	client := newTestRedisClientV9(t)
+	baseBackend := NewGoRedisV9Backend(client)
+
+	key := newBackendTestKey(t, "group:local-dedup")
+
+	// Группа без локальной дедупликации.
+	cbNo := &countingBackend{Backend: baseBackend}
+	gNo := NewGroup[int](cbNo, lockTTL, resultTTL, pollInterval)
+
+	var callsNo int32
+	fnNo := func() (int, error) {
+		n := atomic.AddInt32(&callsNo, 1)
+		time.Sleep(10 * time.Millisecond)
+		return int(n), nil
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(workers)
+	for i := 0; i < workers; i++ {
+		go func() {
+			defer wg.Done()
+			if _, err := gNo.Do(key, fnNo); err != nil {
+				t.Errorf("gNo.Do returned error: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	if got := atomic.LoadInt32(&callsNo); got != 1 {
+		t.Fatalf("without local dedup fn calls = %d, want 1", got)
+	}
+
+	noDedupCalls := func() int {
+		cbNo.mu.Lock()
+		defer cbNo.mu.Unlock()
+		return cbNo.getWithTTLCalls
+	}()
+
+	// Группа с локальной дедупликацией.
+	cbLocal := &countingBackend{Backend: baseBackend}
+	gLocal := NewGroup(cbLocal, lockTTL, resultTTL, pollInterval, WithLocalDeduplication[int](true))
+
+	var callsLocal int32
+	fnLocal := func() (int, error) {
+		n := atomic.AddInt32(&callsLocal, 1)
+		time.Sleep(10 * time.Millisecond)
+		return int(n), nil
+	}
+
+	wg.Add(workers)
+	for i := 0; i < workers; i++ {
+		go func() {
+			defer wg.Done()
+			if _, err := gLocal.Do(key, fnLocal); err != nil {
+				t.Errorf("gLocal.Do returned error: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	if got := atomic.LoadInt32(&callsLocal); got != 1 {
+		t.Fatalf("with local dedup fn calls = %d, want 1", got)
+	}
+
+	localDedupCalls := func() int {
+		cbLocal.mu.Lock()
+		defer cbLocal.mu.Unlock()
+		return cbLocal.getWithTTLCalls
+	}()
+
+	if localDedupCalls >= noDedupCalls {
+		t.Fatalf("expected local dedup to reduce backend GetResultWithTTL calls, got local=%d, no-local=%d",
+			localDedupCalls, noDedupCalls)
+	}
+}
+
+// TestGroup_WarmupWindow_BackgroundRecompute проверяет, что при включённом окне прогрева:
+//   - первый hit после вычисления возвращает старое значение и запускает прогрев в фоне;
+//   - фоновый прогрев выполняет fn ещё раз и обновляет результат;
+//   - последующие запросы получают обновлённое значение.
+func TestGroup_WarmupWindow_BackgroundRecompute(t *testing.T) {
+	client := newTestRedisClientV9(t)
+	backend := NewGoRedisV9Backend(client)
+
+	key := newBackendTestKey(t, "group:warmup-window")
+
+	const (
+		lockTTL      = 500 * time.Millisecond
+		resultTTL    = 200 * time.Millisecond
+		pollInterval = 10 * time.Millisecond
+		warmupWindow = 500 * time.Millisecond
+	)
+
+	g := NewGroup[int](
+		backend,
+		lockTTL,
+		resultTTL,
+		pollInterval,
+		WithWarmupWindow[int](warmupWindow),
+	)
+
+	var calls int32
+	fn := func() (int, error) {
+		n := atomic.AddInt32(&calls, 1)
+		time.Sleep(20 * time.Millisecond)
+		return int(n), nil
+	}
+
+	// Первый вызов вычисляет значение и кладёт его в Redis.
+	v1, err := g.Do(key, fn)
+	if err != nil {
+		t.Fatalf("first Do returned error: %v", err)
+	}
+	if v1 != 1 {
+		t.Fatalf("first Do = %d, want 1", v1)
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Fatalf("fn calls after first Do = %d, want 1", got)
+	}
+
+	// Второй вызов должен взять старое значение из кеша и запустить прогрев в фоне.
+	v2, err := g.Do(key, fn)
+	if err != nil {
+		t.Fatalf("second Do returned error: %v", err)
+	}
+	if v2 != 1 {
+		t.Fatalf("second Do = %d, want 1 (cached)", v2)
+	}
+
+	// Ждём, пока фоновый прогрев выполнит fn второй раз.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if atomic.LoadInt32(&calls) >= 2 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := atomic.LoadInt32(&calls); got != 2 {
+		t.Fatalf("fn calls after warmup = %d, want 2", got)
+	}
+
+	// Третий вызов должен получить обновлённое значение 2 из кеша.
+	v3, err := g.Do(key, fn)
+	if err != nil {
+		t.Fatalf("third Do returned error: %v", err)
+	}
+	if v3 != 2 {
+		t.Fatalf("third Do = %d, want 2 (warmed up)", v3)
+	}
+	if got := atomic.LoadInt32(&calls); got != 2 {
+		t.Fatalf("fn calls after third Do = %d, want still 2", got)
 	}
 }
