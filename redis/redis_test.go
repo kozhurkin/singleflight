@@ -217,24 +217,25 @@ func (c *countingBackend) GetResultWithTTL(ctx context.Context, resultKey string
 // снижает количество обращений к Backend (GetResultWithTTL) при множественных конкурентных Do.
 func TestGroup_LocalDeduplication_ReducesBackendCalls(t *testing.T) {
 	const (
-		lockTTL      = 500 * time.Millisecond
-		resultTTL    = 2 * time.Second
-		pollInterval = 50 * time.Millisecond
+		lockTTL      = 50 * time.Millisecond
+		resultTTL    = 100 * time.Millisecond
+		pollInterval = 10 * time.Millisecond
 		workers      = 8
 	)
 
 	client := newTestRedisClientV9(t)
 	baseBackend := NewGoRedisV9Backend(client)
 
-	key := newBackendTestKey(t, "group:local-dedup")
+	key1 := newBackendTestKey(t, "local-dedup-false")
+	key2 := newBackendTestKey(t, "local-dedup-true")
 
 	// Группа без локальной дедупликации.
-	cbNo := &countingBackend{Backend: baseBackend}
-	gNo := NewGroup[int](cbNo, lockTTL, resultTTL, pollInterval)
+	counting := &countingBackend{Backend: baseBackend}
+	group := NewGroup[int](counting, lockTTL, resultTTL, pollInterval)
 
-	var callsNo int32
-	fnNo := func() (int, error) {
-		n := atomic.AddInt32(&callsNo, 1)
+	var calls int32
+	fn := func() (int, error) {
+		n := atomic.AddInt32(&calls, 1)
 		time.Sleep(10 * time.Millisecond)
 		return int(n), nil
 	}
@@ -244,58 +245,40 @@ func TestGroup_LocalDeduplication_ReducesBackendCalls(t *testing.T) {
 	for i := 0; i < workers; i++ {
 		go func() {
 			defer wg.Done()
-			if _, err := gNo.Do(key, fnNo); err != nil {
-				t.Errorf("gNo.Do returned error: %v", err)
+			if _, err := group.Do(key1, fn); err != nil {
+				t.Errorf("group.Do returned error: %v", err)
 			}
 		}()
 	}
 	wg.Wait()
 
-	if got := atomic.LoadInt32(&callsNo); got != 1 {
+	if got := atomic.LoadInt32(&calls); got != 1 {
 		t.Fatalf("without local dedup fn calls = %d, want 1", got)
 	}
 
-	noDedupCalls := func() int {
-		cbNo.mu.Lock()
-		defer cbNo.mu.Unlock()
-		return cbNo.getWithTTLCalls
-	}()
-
-	// Группа с локальной дедупликацией.
-	cbLocal := &countingBackend{Backend: baseBackend}
-	gLocal := NewGroup(cbLocal, lockTTL, resultTTL, pollInterval, WithLocalDeduplication[int](true))
-
-	var callsLocal int32
-	fnLocal := func() (int, error) {
-		n := atomic.AddInt32(&callsLocal, 1)
-		time.Sleep(10 * time.Millisecond)
-		return int(n), nil
+	if got := counting.getWithTTLCalls; got != workers {
+		t.Fatalf("without local dedup getWithTTLCalls = %d, want %d", got, workers)
 	}
+
+	group = NewGroup(counting, lockTTL, resultTTL, pollInterval, WithLocalDeduplication[int](true))
 
 	wg.Add(workers)
 	for i := 0; i < workers; i++ {
 		go func() {
 			defer wg.Done()
-			if _, err := gLocal.Do(key, fnLocal); err != nil {
-				t.Errorf("gLocal.Do returned error: %v", err)
+			if _, err := group.Do(key2, fn); err != nil {
+				t.Errorf("group.Do returned error: %v", err)
 			}
 		}()
 	}
 	wg.Wait()
 
-	if got := atomic.LoadInt32(&callsLocal); got != 1 {
-		t.Fatalf("with local dedup fn calls = %d, want 1", got)
+	if got := atomic.LoadInt32(&calls); got != 2 {
+		t.Fatalf("with local dedup fn calls = %d, want 2", got)
 	}
 
-	localDedupCalls := func() int {
-		cbLocal.mu.Lock()
-		defer cbLocal.mu.Unlock()
-		return cbLocal.getWithTTLCalls
-	}()
-
-	if localDedupCalls >= noDedupCalls {
-		t.Fatalf("expected local dedup to reduce backend GetResultWithTTL calls, got local=%d, no-local=%d",
-			localDedupCalls, noDedupCalls)
+	if got := counting.getWithTTLCalls; got != workers+1 {
+		t.Fatalf("without local dedup getWithTTLCalls = %d, want %d", got, workers)
 	}
 }
 
