@@ -30,8 +30,8 @@ var (
 	ErrInvalidResultTTL = errors.New("redisflight: resultTTL must be >= 1ms")
 	// ErrResultTTLNotGreaterThanPollInterval означает, что resultTTL <= pollInterval.
 	ErrResultTTLNotGreaterThanPollInterval = errors.New("redisflight: resultTTL must be > pollInterval")
-	// ErrWarmupNotNeeded — внутренний маркер, что прогрев больше не требуется.
-	ErrWarmupNotNeeded = errors.New("redisflight: warmup not needed")
+	// ErrResultUpdatedConcurrently — внутренний маркер: результат уже был обновлён другим процессом.
+	ErrResultUpdatedConcurrently = errors.New("redisflight: result updated concurrently")
 	// ErrTimeoutWaitingForResult означает, что ждём результат слишком долго.
 	ErrTimeoutWaitingForResult = errors.New("redisflight: timeout waiting for result")
 )
@@ -97,7 +97,7 @@ func (g *Group[V]) DoCtx(ctx context.Context, key string, fn func() (V, error)) 
 				if ttl, _ := g.backend.GetTTL(ctx, resultKey); g.needWarmup(ttl) {
 					return fn()
 				}
-				return res, ErrWarmupNotNeeded
+				return res, ErrResultUpdatedConcurrently
 			}
 			// Запускаем асинхронный прогрев значения.
 			go g.computeAndStore(ctx, lockKey, resultKey, fnNoRace)
@@ -113,7 +113,9 @@ func (g *Group[V]) DoCtx(ctx context.Context, key string, fn func() (V, error)) 
 	// возвращаем результат без повторного вычисления.
 	fnNoRace := func() (V, error) {
 		if res, found, _ := g.getResult(ctx, resultKey); found {
-			return res, ErrWarmupNotNeeded
+			// Результат уже появился в кеше между первым чтением и захватом блокировки —
+			// текущая попытка вычисления не нужна.
+			return res, ErrResultUpdatedConcurrently
 		}
 		return fn()
 	}
@@ -174,9 +176,9 @@ func (g *Group[V]) computeAndStore(
 	// Захватили блокировку — выполняем fn()
 	res, err := fn()
 	if err != nil {
-		// Если прогрев больше не нужен (кто-то другой уже обновил кеш),
+		// Если результат уже был обновлён конкурентно (ErrResultUpdatedConcurrently),
 		// просто отпускаем блокировку и не считаем это ошибкой для вызывающего кода.
-		if errors.Is(err, ErrWarmupNotNeeded) {
+		if errors.Is(err, ErrResultUpdatedConcurrently) {
 			go g.backend.Unlock(ctx, lockKey, myUUID)
 			return res, true, nil
 		}
@@ -186,7 +188,7 @@ func (g *Group[V]) computeAndStore(
 
 	// Снимаем блокировку и сохраняем результат одной операцией.
 	if _, err := g.unlockAndSetResult(ctx, lockKey, resultKey, myUUID, res); err != nil {
-		return zero, true, err
+		return res, true, err
 	}
 
 	return res, true, nil
