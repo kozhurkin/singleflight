@@ -376,3 +376,58 @@ func TestGroup_WarmupWindow_BackgroundRecompute(t *testing.T) {
 		t.Fatalf("fn calls after third Do = %d, want still 2", got)
 	}
 }
+
+// TestGroup_TimeoutWaitingForResult проверяет, что если блокировка по ключу захвачена
+// "зависшим" владельцем и результат так и не появляется в Redis, Do/DoCtx возвращает
+// ErrTimeoutWaitingForResult после истечения lockTTL+resultTTL.
+func TestGroup_TimeoutWaitingForResult(t *testing.T) {
+	const (
+		lockTTL      = 100 * time.Millisecond
+		resultTTL    = 100 * time.Millisecond
+		pollInterval = 10 * time.Millisecond
+	)
+
+	client := newTestRedisClientV9(t)
+	backend := NewGoRedisV9Backend(client)
+
+	key := newBackendTestKey(t, "group:timeout-waiting")
+	ctx := context.Background()
+
+	// Захватываем блокировку "вручную" с большим TTL, чтобы она не истекла раньше,
+	// чем время ожидания внутри DoCtx.
+	lockKey := "lock:" + key
+	ok, err := backend.TryLock(ctx, lockKey, "stuck-owner", 5*time.Second)
+	if err != nil {
+		t.Fatalf("failed to pre-lock key: %v", err)
+	}
+	if !ok {
+		t.Fatalf("expected to acquire pre-lock, but lock was already held")
+	}
+
+	g := NewGroup[int](backend, lockTTL, resultTTL, pollInterval)
+
+	var calls int32
+	fn := func() (int, error) {
+		// В этом сценарии fn не должен вызываться, так как мы никогда не получим лок.
+		atomic.AddInt32(&calls, 1)
+		return 0, fmt.Errorf("fn should not be called when lock is held by another owner")
+	}
+
+	start := time.Now()
+	_, err = g.Do(key, fn)
+	elapsed := time.Since(start)
+
+	if err != ErrTimeoutWaitingForResult {
+		t.Fatalf("Do returned error %v, want ErrTimeoutWaitingForResult", err)
+	}
+
+	if atomic.LoadInt32(&calls) != 0 {
+		t.Fatalf("fn was called %d times, want 0", calls)
+	}
+
+	// Порядок величины: ожидание не должно быть заметно меньше lockTTL+resultTTL.
+	minExpected := lockTTL + resultTTL
+	if elapsed < minExpected {
+		t.Fatalf("Do returned too early: elapsed=%v, want at least %v", elapsed, minExpected)
+	}
+}
