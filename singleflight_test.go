@@ -391,7 +391,7 @@ func TestGroup_Do_ZeroCacheTime_HighConcurrencyBounded(t *testing.T) {
 	wg.Wait()
 
 	got := atomic.LoadInt32(&calls)
-	require.LessOrEqual(t, got, maxCalls,
+	require.LessOrEqual(t, int(got), maxCalls,
 		"too many fn calls under high concurrency with resultTTL=0: got=%d, max=%d", got, maxCalls)
 }
 
