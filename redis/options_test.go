@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/kozhurkin/singleflight"
+	"github.com/stretchr/testify/require"
 )
 
 func TestWithPrefix_SetsPrefix(t *testing.T) {
@@ -12,25 +13,19 @@ func TestWithPrefix_SetsPrefix(t *testing.T) {
 
 	WithPrefix[int]("sf:")(g)
 
-	if g.prefix != "sf:" {
-		t.Fatalf("expected prefix %q, got %q", "sf:", g.prefix)
-	}
+	require.Equal(t, "sf:", g.prefix, "expected prefix to be set by WithPrefix")
 }
 
 func TestWithLocalDeduplication_EnableCreatesLocalGroup(t *testing.T) {
 	g := &Group[int]{}
 
 	WithLocalDeduplication[int](true)(g)
-	if g.localGroup == nil {
-		t.Fatalf("expected localGroup to be initialized")
-	}
+	require.NotNil(t, g.localGroup, "expected localGroup to be initialized")
 
 	// Повторное включение не должно пересоздавать группу.
 	old := g.localGroup
 	WithLocalDeduplication[int](true)(g)
-	if g.localGroup != old {
-		t.Fatalf("expected localGroup to be reused on subsequent enable")
-	}
+	require.Same(t, old, g.localGroup, "expected localGroup to be reused on subsequent enable")
 }
 
 func TestWithLocalDeduplication_DisableClearsLocalGroup(t *testing.T) {
@@ -40,9 +35,7 @@ func TestWithLocalDeduplication_DisableClearsLocalGroup(t *testing.T) {
 
 	WithLocalDeduplication[int](false)(g)
 
-	if g.localGroup != nil {
-		t.Fatalf("expected localGroup to be nil after disabling, got non-nil")
-	}
+	require.Nil(t, g.localGroup, "expected localGroup to be nil after disabling")
 }
 
 func TestWithWarmupWindow_SetsWarmupWindow(t *testing.T) {
@@ -51,12 +44,9 @@ func TestWithWarmupWindow_SetsWarmupWindow(t *testing.T) {
 	d := 500 * time.Millisecond
 	WithWarmupWindow[int](d)(g)
 
-	if g.warmupWindow != d {
-		t.Fatalf("expected warmupWindow %v, got %v", d, g.warmupWindow)
-	}
+	require.Equal(t, d, g.warmupWindow, "expected warmupWindow to be set")
 
 	WithWarmupWindow[int](0)(g)
-	if g.warmupWindow != 0 {
-		t.Fatalf("expected warmupWindow to be 0 after disabling, got %v", g.warmupWindow)
-	}
+	require.Equal(t, time.Duration(0), g.warmupWindow,
+		"expected warmupWindow to be 0 after disabling")
 }
