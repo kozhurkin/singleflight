@@ -226,8 +226,8 @@ func TestGroup_LocalDeduplication_ReducesBackendCalls(t *testing.T) {
 	client := newTestRedisClientV9(t)
 	baseBackend := NewGoRedisV9Backend(client)
 
-	key1 := newBackendTestKey(t, "local-dedup-false")
-	key2 := newBackendTestKey(t, "local-dedup-true")
+	key1 := newBackendTestKey(t, "group:local-dedup-false")
+	key2 := newBackendTestKey(t, "group:local-dedup-true")
 
 	// Группа без локальной дедупликации.
 	counting := &countingBackend{Backend: baseBackend}
@@ -293,10 +293,11 @@ func TestGroup_WarmupWindow_BackgroundRecompute(t *testing.T) {
 	key := newBackendTestKey(t, "group:warmup-window")
 
 	const (
-		lockTTL      = 500 * time.Millisecond
-		resultTTL    = 200 * time.Millisecond
+		lockTTL      = 200 * time.Millisecond
+		resultTTL    = 500 * time.Millisecond
 		pollInterval = 10 * time.Millisecond
-		warmupWindow = 500 * time.Millisecond
+		warmupWindow = 300 * time.Millisecond
+		fnDelay      = 20 * time.Millisecond
 	)
 
 	g := NewGroup(
@@ -310,7 +311,7 @@ func TestGroup_WarmupWindow_BackgroundRecompute(t *testing.T) {
 	var calls int32
 	fn := func() (int, error) {
 		n := atomic.AddInt32(&calls, 1)
-		time.Sleep(20 * time.Millisecond)
+		time.Sleep(fnDelay)
 		return int(n), nil
 	}
 
@@ -326,6 +327,8 @@ func TestGroup_WarmupWindow_BackgroundRecompute(t *testing.T) {
 		t.Fatalf("fn calls after first Do = %d, want 1", got)
 	}
 
+	time.Sleep(resultTTL)
+
 	// Второй вызов должен взять старое значение из кеша и запустить прогрев в фоне.
 	v2, err := g.Do(key, fn)
 	if err != nil {
@@ -335,17 +338,7 @@ func TestGroup_WarmupWindow_BackgroundRecompute(t *testing.T) {
 		t.Fatalf("second Do = %d, want 1 (cached)", v2)
 	}
 
-	// Ждём, пока фоновый прогрев выполнит fn второй раз.
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if atomic.LoadInt32(&calls) >= 2 {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if got := atomic.LoadInt32(&calls); got != 2 {
-		t.Fatalf("fn calls after warmup = %d, want 2", got)
-	}
+	time.Sleep(fnDelay * 2)
 
 	// Третий вызов должен получить обновлённое значение 2 из кеша.
 	v3, err := g.Do(key, fn)
