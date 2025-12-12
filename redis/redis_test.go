@@ -7,6 +7,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 // TestGroup_ResultTTL_ExpiresAndRecomputes проверяет, что после истечения resultTTL
@@ -33,28 +35,16 @@ func TestGroup_ResultTTL_ExpiresAndRecomputes(t *testing.T) {
 
 	// Первый вызов — выполняет fn и кладёт результат в Redis.
 	v1, err := g.Do(key, fn)
-	if err != nil {
-		t.Fatalf("first Do returned error: %v", err)
-	}
-	if v1 != 1 {
-		t.Fatalf("first Do = %d, want 1", v1)
-	}
-	if got := atomic.LoadInt32(&calls); got != 1 {
-		t.Fatalf("fn calls after first Do = %d, want 1", got)
-	}
+	require.NoError(t, err, "first Do should not return error")
+	require.Equal(t, 1, v1, "first Do should return 1")
+	require.Equal(t, int32(1), atomic.LoadInt32(&calls), "fn should be called once after first Do")
 
 	// Второй вызов до истечения resultTTL должен взять результат из кеша,
 	// а fn не должен быть вызван повторно.
 	v2, err := g.Do(key, fn)
-	if err != nil {
-		t.Fatalf("second Do returned error: %v", err)
-	}
-	if v2 != 1 {
-		t.Fatalf("second Do = %d, want 1 (cached)", v2)
-	}
-	if got := atomic.LoadInt32(&calls); got != 1 {
-		t.Fatalf("fn calls after second Do = %d, want still 1", got)
-	}
+	require.NoError(t, err, "second Do should not return error")
+	require.Equal(t, 1, v2, "second Do should return cached 1")
+	require.Equal(t, int32(1), atomic.LoadInt32(&calls), "fn should still be called once after second Do")
 
 	// Ждём, пока истечёт TTL результата.
 	time.Sleep(resultTTL + time.Millisecond)
@@ -62,15 +52,9 @@ func TestGroup_ResultTTL_ExpiresAndRecomputes(t *testing.T) {
 	// После истечения resultTTL кеш должен очиститься,
 	// и следующий вызов снова выполнит fn.
 	v3, err := g.Do(key, fn)
-	if err != nil {
-		t.Fatalf("third Do returned error: %v", err)
-	}
-	if v3 != 2 {
-		t.Fatalf("third Do = %d, want 2 (recomputed)", v3)
-	}
-	if got := atomic.LoadInt32(&calls); got != 2 {
-		t.Fatalf("fn calls after third Do = %d, want 2", got)
-	}
+	require.NoError(t, err, "third Do should not return error")
+	require.Equal(t, 2, v3, "third Do should return recomputed 2")
+	require.Equal(t, int32(2), atomic.LoadInt32(&calls), "fn should be called twice after third Do")
 }
 
 // TestGroup_LockTTL_ErrorThenRecoveryWakesWaiters проверяет сценарий, когда первый вызов fn падает с ошибкой:
@@ -152,15 +136,13 @@ func TestGroup_LockTTL_ErrorThenRecoveryWakesWaiters(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(3 * time.Second):
-		t.Fatalf("test timeout: goroutines did not finish")
+		require.FailNow(t, "test timeout: goroutines did not finish")
 	}
 
 	// Проверяем, что fn действительно вызывался дважды:
 	//   - первый раз с ошибкой,
 	//   - второй раз при восстановлении.
-	if got := atomic.LoadInt32(&calls); got != 2 {
-		t.Fatalf("fn calls = %d, want 2", got)
-	}
+	require.Equal(t, int32(2), atomic.LoadInt32(&calls), "fn should be called twice (error + recovery)")
 
 	var (
 		errCount     int
@@ -170,9 +152,7 @@ func TestGroup_LockTTL_ErrorThenRecoveryWakesWaiters(t *testing.T) {
 
 	for _, r := range results {
 		if r.err == nil {
-			if r.val != 42 {
-				t.Fatalf("waiter got value %d, want 42", r.val)
-			}
+			require.Equal(t, 42, r.val, "waiter should see recovered value 42")
 			successCount++
 			continue
 		}
@@ -183,19 +163,13 @@ func TestGroup_LockTTL_ErrorThenRecoveryWakesWaiters(t *testing.T) {
 		case "timeout waiting for result":
 			timeoutCount++
 		default:
-			t.Fatalf("unexpected waiter error: %v", r.err)
+			require.Failf(t, "unexpected waiter error", "error: %v", r.err)
 		}
 	}
 
-	if errCount != 1 {
-		t.Fatalf("expected exactly 1 waiter to see fn error, got %d", errCount)
-	}
-	if timeoutCount != 0 {
-		t.Fatalf("expected no timeouts, got %d", timeoutCount)
-	}
-	if successCount != waiters-1 {
-		t.Fatalf("expected %d successful waiters, got %d", waiters-1, successCount)
-	}
+	require.Equal(t, 1, errCount, "expected exactly 1 waiter to see fn error")
+	require.Equal(t, 0, timeoutCount, "expected no timeouts")
+	require.Equal(t, waiters-1, successCount, "unexpected number of successful waiters")
 }
 
 // countingBackend оборачивает Backend и считает количество вызовов GetResultWithTTL.
@@ -252,13 +226,11 @@ func TestGroup_LocalDeduplication_ReducesBackendCalls(t *testing.T) {
 	}
 	wg.Wait()
 
-	if got := atomic.LoadInt32(&calls); got != 1 {
-		t.Fatalf("without local dedup fn calls = %d, want 1", got)
-	}
+	require.Equal(t, int32(1), atomic.LoadInt32(&calls),
+		"without local dedup fn should be called once")
 
-	if got := counting.getWithTTLCalls; got != workers {
-		t.Fatalf("without local dedup getWithTTLCalls = %d, want %d", got, workers)
-	}
+	require.Equal(t, workers, counting.getWithTTLCalls,
+		"without local dedup GetResultWithTTL should be called for each worker")
 
 	group = NewGroup(counting, lockTTL, resultTTL, pollInterval, WithLocalDeduplication[int](true))
 
@@ -273,13 +245,11 @@ func TestGroup_LocalDeduplication_ReducesBackendCalls(t *testing.T) {
 	}
 	wg.Wait()
 
-	if got := atomic.LoadInt32(&calls); got != 2 {
-		t.Fatalf("with local dedup fn calls = %d, want 2", got)
-	}
+	require.Equal(t, int32(2), atomic.LoadInt32(&calls),
+		"with local dedup fn should be called exactly twice (once per key)")
 
-	if got := counting.getWithTTLCalls; got != workers+1 {
-		t.Fatalf("without local dedup getWithTTLCalls = %d, want %d", got, workers)
-	}
+	require.Equal(t, workers+1, counting.getWithTTLCalls,
+		"with local dedup GetResultWithTTL should be called once for warm cache hit")
 }
 
 // TestGroup_WarmupWindow_BackgroundRecompute проверяет, что при включённом окне прогрева:
@@ -317,40 +287,24 @@ func TestGroup_WarmupWindow_BackgroundRecompute(t *testing.T) {
 
 	// Первый вызов вычисляет значение и кладёт его в Redis.
 	v1, err := g.Do(key, fn)
-	if err != nil {
-		t.Fatalf("first Do returned error: %v", err)
-	}
-	if v1 != 1 {
-		t.Fatalf("first Do = %d, want 1", v1)
-	}
-	if got := atomic.LoadInt32(&calls); got != 1 {
-		t.Fatalf("fn calls after first Do = %d, want 1", got)
-	}
+	require.NoError(t, err, "first Do should not return error")
+	require.Equal(t, 1, v1, "first Do should return 1")
+	require.Equal(t, int32(1), atomic.LoadInt32(&calls), "fn should be called once after first Do")
 
 	time.Sleep(resultTTL)
 
 	// Второй вызов должен взять старое значение из кеша и запустить прогрев в фоне.
 	v2, err := g.Do(key, fn)
-	if err != nil {
-		t.Fatalf("second Do returned error: %v", err)
-	}
-	if v2 != 1 {
-		t.Fatalf("second Do = %d, want 1 (cached)", v2)
-	}
+	require.NoError(t, err, "second Do should not return error")
+	require.Equal(t, 1, v2, "second Do should return cached 1")
 
 	time.Sleep(fnDelay * 2)
 
 	// Третий вызов должен получить обновлённое значение 2 из кеша.
 	v3, err := g.Do(key, fn)
-	if err != nil {
-		t.Fatalf("third Do returned error: %v", err)
-	}
-	if v3 != 2 {
-		t.Fatalf("third Do = %d, want 2 (warmed up)", v3)
-	}
-	if got := atomic.LoadInt32(&calls); got != 2 {
-		t.Fatalf("fn calls after third Do = %d, want still 2", got)
-	}
+	require.NoError(t, err, "third Do should not return error")
+	require.Equal(t, 2, v3, "third Do should return warmed-up 2")
+	require.Equal(t, int32(2), atomic.LoadInt32(&calls), "fn should be called twice after warmup")
 }
 
 // TestGroup_TimeoutWaitingForResult проверяет, что если блокировка по ключу захвачена
@@ -378,12 +332,9 @@ func TestGroup_TimeoutWaitingForResult(t *testing.T) {
 		return 0, fmt.Errorf("intentional failure to keep lock without result")
 	}
 
-	if _, err := g.Do(key, firstFn); err == nil {
-		t.Fatalf("first Do returned nil error, want non-nil")
-	}
-	if got := atomic.LoadInt32(&firstCalls); got != 1 {
-		t.Fatalf("first fn was called %d times, want 1", got)
-	}
+	_, err := g.Do(key, firstFn)
+	require.Error(t, err, "first Do should return an error")
+	require.Equal(t, int32(1), atomic.LoadInt32(&firstCalls), "first fn should be called once")
 
 	// Теперь выполняем Do ещё раз: блокировка уже захвачена "зависшим" владельцем,
 	// а результат в кеше так и не появился. Мы должны получить ErrTimeoutWaitingForResult,
@@ -395,20 +346,17 @@ func TestGroup_TimeoutWaitingForResult(t *testing.T) {
 	}
 
 	start := time.Now()
-	_, err := g.Do(key, fn)
+	_, err = g.Do(key, fn)
 	elapsed := time.Since(start)
 
-	if err != ErrTimeoutWaitingForResult {
-		t.Fatalf("Do returned error %v, want ErrTimeoutWaitingForResult", err)
-	}
+	require.ErrorIs(t, err, ErrTimeoutWaitingForResult,
+		"Do should return ErrTimeoutWaitingForResult when lock is held and result never appears")
 
-	if atomic.LoadInt32(&calls) != 0 {
-		t.Fatalf("fn was called %d times, want 0", calls)
-	}
+	require.Equal(t, int32(0), atomic.LoadInt32(&calls),
+		"fn should not be called when lock is held by another owner")
 
 	// Порядок величины: ожидание не должно быть заметно меньше lockTTL+resultTTL.
 	minExpected := lockTTL + resultTTL
-	if elapsed < minExpected {
-		t.Fatalf("Do returned too early: elapsed=%v, want at least %v", elapsed, minExpected)
-	}
+	require.GreaterOrEqual(t, elapsed, minExpected,
+		"Do returned too early: elapsed=%v, want at least %v", elapsed, minExpected)
 }
