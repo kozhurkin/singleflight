@@ -391,9 +391,8 @@ func TestGroup_Do_ZeroCacheTime_HighConcurrencyBounded(t *testing.T) {
 	wg.Wait()
 
 	got := atomic.LoadInt32(&calls)
-	if got > maxCalls {
-		t.Fatalf("too many fn calls under high concurrency with resultTTL=0: got=%d, max=%d", got, maxCalls)
-	}
+	require.LessOrEqual(t, got, maxCalls,
+		"too many fn calls under high concurrency with resultTTL=0: got=%d, max=%d", got, maxCalls)
 }
 
 // TestGroup_Warming_CallsCount — диагностический тест для оценки количества вызовов fn
@@ -488,7 +487,6 @@ func TestGroup_CacheAge_NotMoreThanTTLPlusWarmup(t *testing.T) {
 	limit := resultTTL + warmupWindow + jitter
 	t.Logf("maxAge=%v, limit=%v", maxAge, limit)
 
-	if atomic.LoadInt32(&violation) != 0 {
-		t.Fatalf("cache age invariant violated under load: maxAge=%v, limit=%v", maxAge, limit)
-	}
+	require.Equal(t, int32(0), atomic.LoadInt32(&violation),
+		"cache age invariant violated under load: maxAge=%v, limit=%v", maxAge, limit)
 }
