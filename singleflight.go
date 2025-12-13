@@ -19,25 +19,30 @@ type Group[K comparable, V any] struct {
 	warmupWindow time.Duration
 }
 
-// NewGroup создаёт новый экземпляр Group без кеширования (только дедупликация).
-func NewGroup[K comparable, V any]() *Group[K, V] {
-	return &Group[K, V]{
+// NewGroup создаёт новый экземпляр Group.
+// По умолчанию кеш и прогрев выключены; их можно включить через опции:
+//   - WithCache(resultTTL, errorTTL)
+//   - WithWarmupWindow(warmupWindow)
+func NewGroup[K comparable, V any](opts ...Option[K, V]) *Group[K, V] {
+	g := &Group[K, V]{
 		flights: make(map[K]*flight.FlightFlow[V]),
 	}
+	for _, opt := range opts {
+		opt(g)
+	}
+	return g
 }
 
 // NewGroupWithCache создаёт новый Group с параметрами кеширования.
+// Сохранён для обратной совместимости и построен поверх опций NewGroup.
 // resultTTL задаёт TTL кеша для успешных результатов.
 // errorTTL задаёт TTL кеша для ошибок (0 — ошибки не кешируются).
 // warmupWindow задаёт время ожидания прогрева перед удалением ключа из кеша.
 func NewGroupWithCache[K comparable, V any](resultTTL time.Duration, errorTTL time.Duration, warmupWindow time.Duration) *Group[K, V] {
-	return &Group[K, V]{
-		flights:      make(map[K]*flight.FlightFlow[V]),
-		warmings:     make(map[K]*flight.FlightFlow[V]),
-		resultTTL:    resultTTL,
-		errorTTL:     errorTTL,
-		warmupWindow: warmupWindow,
-	}
+	return NewGroup(
+		WithCache[K, V](resultTTL, errorTTL),
+		WithWarmupWindow[K, V](warmupWindow),
+	)
 }
 
 // getOrCreateFlight атомарно получает существующий Flight по key
