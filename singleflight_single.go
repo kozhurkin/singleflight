@@ -9,8 +9,11 @@ type SingleGroup[V any] struct {
 }
 
 // NewSingleGroup создаёт группу без кеша (только дедупликация одного запроса).
-func NewSingleGroup[V any]() *SingleGroup[V] {
-	return &SingleGroup[V]{g: NewGroup[struct{}, V]()}
+// Дополнительные параметры можно задать через опции, аналогичные Group:
+//   - WithCache
+//   - WithWarmupWindow
+func NewSingleGroup[V any](opts ...Option[struct{}, V]) *SingleGroup[V] {
+	return &SingleGroup[V]{g: NewGroup(opts...)}
 }
 
 // NewSingleGroupWithCache создаёт группу с кешированием одного запроса.
@@ -19,9 +22,10 @@ func NewSingleGroupWithCache[V any](
 	errorTTL time.Duration,
 	warmupWindow time.Duration,
 ) *SingleGroup[V] {
-	return &SingleGroup[V]{
-		g: NewGroupWithCache[struct{}, V](resultTTL, errorTTL, warmupWindow),
-	}
+	return NewSingleGroup(
+		WithCache[struct{}, V](resultTTL, errorTTL),
+		WithWarmupWindow[struct{}, V](warmupWindow),
+	)
 }
 
 // Do выполняет (или переиспользует) вычисление значения для единственного ключа
