@@ -54,12 +54,28 @@ go get github.com/kozhurkin/singleflight
 
 ## API
 
-#### Конструктор без кеша (только дедупликация):
+#### Конструктор
 
 ```go
-func NewGroup[K comparable, V any]() *Group[K, V]
+func NewGroup[K comparable, V any](opts ...Option[K, V]) *Group[K, V]
 ```
-#### Конструктор с кешем и прогревом:
+
+Опции:
+
+```go
+type Option[K comparable, V any] func(*Group[K, V])
+
+func WithCache[K comparable, V any](
+    resultTTL time.Duration, // TTL успешного значения
+    errorTTL  time.Duration, // TTL ошибок (0 — ошибки не кешируются)
+) Option[K, V]
+
+func WithWarmupWindow[K comparable, V any](
+    warmupWindow time.Duration, // окно прогрева (0 — прогрев отключён)
+) Option[K, V]
+```
+
+Сокращённый конструктор, совместимый с предыдущей версией API:
 
 ```go
 func NewGroupWithCache[K comparable, V any](
