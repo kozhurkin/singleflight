@@ -9,8 +9,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestSingleGroup_Do_DeduplicatesConcurrent(t *testing.T) {
-	g := NewSingleGroup[int]()
+func TestSingle_Do_DeduplicatesConcurrent(t *testing.T) {
+	g := NewSingle[int]()
 
 	var calls int32
 	fn := func() (int, error) {
@@ -42,10 +42,10 @@ func TestSingleGroup_Do_DeduplicatesConcurrent(t *testing.T) {
 	require.Equal(t, int32(1), atomic.LoadInt32(&calls), "fn should be called exactly once")
 }
 
-func TestSingleGroup_Do_CacheSuccessResult(t *testing.T) {
+func TestSingle_Do_CacheSuccessResult(t *testing.T) {
 	const resultTTL = 5 * time.Millisecond
 
-	g := NewSingleGroupWithCache[int](resultTTL, 0, 0)
+	g := NewSingleWithCache[int](resultTTL, 0, 0)
 
 	var calls int32
 	fn := func() (int, error) {
