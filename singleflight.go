@@ -129,10 +129,6 @@ func (g *Group[K, V]) cacheFinalizerForKey(key K) func(res V, err error) {
 	}
 }
 
-// Do выполняет (или переиспользует) вычисление значения для key с учётом настроек кеша.
-// fn вызывается только один раз для каждого key в период resultTTL (если resultTTL > 0).
-// Ошибки кешируются отдельно: при errorTTL == 0 ошибки не кешируются (последующие
-// вызовы будут пытаться ещё раз), при errorTTL > 0 ошибки живут в кеше errorTTL.
 func (g *Group[K, V]) Do(
 	key K,
 	fn func() (V, error),
