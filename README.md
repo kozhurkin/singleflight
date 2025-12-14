@@ -60,13 +60,11 @@ go get github.com/kozhurkin/singleflight
 func NewGroup[K comparable, V any](opts ...Option[K, V]) *Group[K, V]
 ```
 
-Опции:
-
 ```go
 type Option[K comparable, V any] func(*Group[K, V])
 
 func WithCache[K comparable, V any](
-    resultTTL time.Duration, // TTL успешного значения
+    resultTTL time.Duration, // TTL успешного значения (0 — результат не кешируется)
     errorTTL  time.Duration, // TTL ошибок (0 — ошибки не кешируются)
 ) Option[K, V]
 
@@ -75,13 +73,13 @@ func WithWarmupWindow[K comparable, V any](
 ) Option[K, V]
 ```
 
-Сокращённый конструктор, совместимый с предыдущей версией API:
+или
 
 ```go
 func NewGroupWithCache[K comparable, V any](
-    resultTTL    time.Duration, // TTL успешного значения
+    resultTTL    time.Duration, // TTL успешного значения (0 — результат не кешируется)
     errorTTL     time.Duration, // TTL ошибок (0 — ошибки не кешируются)
-    warmupWindow time.Duration, // окно прогрева
+    warmupWindow time.Duration, // окно прогрева (0 — прогрев отключён)
 ) *Group[K, V]
 ```
 
